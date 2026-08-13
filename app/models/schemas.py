@@ -3,7 +3,8 @@
 from __future__ import annotations
 from datetime import datetime
 from typing import Literal, Any
-from pydantic import BaseModel, Field
+import re
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── Structured Output Schemas (LLM → App) ────────────────────────────────────
@@ -29,13 +30,33 @@ class ExtractedEntities(BaseModel):
     payment_references: list[str] = []
     unresolved_references: list[str] = []
 
-    def __init__(self, **data):
-        # Flatten customer_id if passed as a list
+    @model_validator(mode="before")
+    @classmethod
+    def clean_entities(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
         cid = data.get("customer_id")
         if isinstance(cid, list):
-            valid_cids = [str(x) for x in cid if x is not None]
+            valid_cids = [str(x) for x in cid if x not in (None, "null", "None", "")]
             data["customer_id"] = valid_cids[0] if valid_cids else None
-        super().__init__(**data)
+        elif cid in ("null", "None", ""):
+            data["customer_id"] = None
+
+        raw_amounts = data.get("amounts")
+        if isinstance(raw_amounts, list):
+            cleaned_amts = []
+            for a in raw_amounts:
+                if isinstance(a, (int, float)):
+                    cleaned_amts.append(float(a))
+                elif isinstance(a, str):
+                    nums = re.findall(r'[-+]?\d[\d,]*\.?\d*', a)
+                    if nums:
+                        try:
+                            cleaned_amts.append(float(nums[0].replace(',', '')))
+                        except ValueError:
+                            pass
+            data["amounts"] = cleaned_amts
+        return data
 
 
 class TaskPlan(BaseModel):
@@ -48,7 +69,7 @@ class TaskPlan(BaseModel):
 
 
 class CustomerResponse(BaseModel):
-    message: str
+    message: str = ""
     action_taken: bool = False
     action_type: str | None = None
     case_id: str | None = None
@@ -56,6 +77,22 @@ class CustomerResponse(BaseModel):
     requires_follow_up: bool = False
     escalation_required: bool = False
     factual_basis: list[Any] = []
+
+    @model_validator(mode="before")
+    @classmethod
+    def clean_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for field in ("action_type", "case_id", "approval_id"):
+            val = data.get(field)
+            if isinstance(val, list):
+                valid = [str(x) for x in val if x not in (None, "null", "None", "")]
+                data[field] = valid[0] if valid else None
+            elif val in ("null", "None", ""):
+                data[field] = None
+        if "factual_basis" in data and not isinstance(data["factual_basis"], list):
+            data["factual_basis"] = [str(data["factual_basis"])]
+        return data
 
 
 class FinancialAnalysis(BaseModel):
