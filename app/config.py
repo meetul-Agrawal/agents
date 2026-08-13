@@ -7,7 +7,7 @@ class Settings(BaseSettings):
 
     nvidia_api_key: str = ""
     nim_base_url: str = "https://integrate.api.nvidia.com/v1"
-    nim_model: str = "nvidia/llama-3.1-nemotron-70b-instruct"
+    nim_model: str = "meta/llama-3.1-8b-instruct"
 
     mongodb_uri: str = "mongodb://localhost:27017/"
     mongodb_database: str = "sf_tenant_6a33b5b2091da2fb4a7c3de4"

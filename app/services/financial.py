@@ -72,13 +72,14 @@ class FinancialContextService:
                     if r.on_account_allocations:
                         on_account.append(r.model_dump())
 
-        # Opening balance from ledger as authoritative outstanding
+        # Outstanding balance from ledger
         cust_raw = await self._customer.find_by_guid(customer_id)
         outstanding: float | None = None
         if cust_raw:
             ob = cust_raw.get("balances", {}).get("openingBalance", {})
             if ob:
-                outstanding = ob.get("amount")
+                raw_amt = ob.get("amount", 0.0)
+                outstanding = abs(raw_amt)
 
         return FinancialContext(
             customer_id=customer_id,

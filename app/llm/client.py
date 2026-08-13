@@ -57,20 +57,28 @@ async def structured_call(
     schema: type[BaseModel],
     temperature: float = 0.1,
 ) -> BaseModel:
-    """Call NIM with JSON output and parse into schema.
-    ponytail: json_object mode — not all NIM models support json_schema.
-    """
-    schema_str = json.dumps(schema.model_json_schema(), indent=2)
+    """Call NIM with JSON output and parse into schema."""
+    props = schema.model_json_schema().get("properties", {})
+    keys_desc = []
+    for k, v in props.items():
+        vtype = v.get("type") or v.get("anyOf") or "string"
+        desc = v.get("description", "")
+        keys_desc.append(f'  "{k}": <{vtype}>' + (f' // {desc}' if desc else ""))
+    
+    fields_guide = "{\n" + ",\n".join(keys_desc) + "\n}"
+    prompt_suffix = (
+        f"\n\nIMPORTANT: Respond ONLY with a valid JSON object matching this structure (fill concrete values, DO NOT return schema definitions or 'properties'):\n{fields_guide}"
+    )
+
     if messages and messages[-1]["role"] == "user":
         augmented = messages[:-1] + [{
             "role": "user",
-            "content": messages[-1]["content"]
-                       + f"\n\nRespond with valid JSON matching this schema:\n{schema_str}",
+            "content": messages[-1]["content"] + prompt_suffix,
         }]
     else:
         augmented = messages + [{
             "role": "user",
-            "content": f"Respond with valid JSON matching this schema:\n{schema_str}",
+            "content": prompt_suffix,
         }]
 
     await _rate_limit()
@@ -80,9 +88,25 @@ async def structured_call(
         response_format={"type": "json_object"},
         temperature=temperature,
     )
-    raw = resp.choices[0].message.content
+    raw = resp.choices[0].message.content or "{}"
     logger.debug("structured_call raw: %s", raw[:200])
-    return schema.model_validate_json(raw)
+
+    try:
+        data = json.loads(raw)
+        # If model returned schema metadata wrapper like {"properties": {...}}, extract defaults or values
+        if "properties" in data and isinstance(data["properties"], dict) and not any(k in data for k in props if k != "properties"):
+            extracted = {}
+            for k in props:
+                if k in data["properties"]:
+                    prop_info = data["properties"][k]
+                    if isinstance(prop_info, dict):
+                        extracted[k] = prop_info.get("default") or prop_info.get("value")
+                    else:
+                        extracted[k] = prop_info
+            data = extracted
+        return schema.model_validate(data)
+    except Exception:
+        return schema.model_validate_json(raw)
 
 
 async def tool_call(

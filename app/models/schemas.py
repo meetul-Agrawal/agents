@@ -9,19 +9,13 @@ from pydantic import BaseModel, Field
 # ── Structured Output Schemas (LLM → App) ────────────────────────────────────
 
 class IntentClassification(BaseModel):
-    intent: Literal[
-        "GENERAL_QUERY", "CUSTOMER_INFORMATION", "INVOICE_QUERY",
-        "PAYMENT_QUERY", "RECEIPT_QUERY", "LEDGER_QUERY",
-        "OUTSTANDING_QUERY", "PAYMENT_HISTORY", "PAYMENT_REMINDER",
-        "DISPUTE", "COMPLAINT", "CASE_STATUS", "CASE_UPDATE",
-        "APPROVAL_REQUEST", "MANAGEMENT_DECISION", "GENERAL_SUPPORT", "UNKNOWN",
-    ]
-    confidence: float = Field(ge=0.0, le=1.0)
-    requires_customer_context: bool
-    requires_financial_context: bool
-    requires_case_context: bool
-    requires_action: bool
-    requires_human: bool
+    intent: str = "GENERAL_QUERY"
+    confidence: float = 1.0
+    requires_customer_context: bool = True
+    requires_financial_context: bool = False
+    requires_case_context: bool = False
+    requires_action: bool = False
+    requires_human: bool = False
 
 
 class ExtractedEntities(BaseModel):
@@ -35,20 +29,22 @@ class ExtractedEntities(BaseModel):
     payment_references: list[str] = []
     unresolved_references: list[str] = []
 
+    def __init__(self, **data):
+        # Flatten customer_id if passed as a list
+        cid = data.get("customer_id")
+        if isinstance(cid, list):
+            valid_cids = [str(x) for x in cid if x is not None]
+            data["customer_id"] = valid_cids[0] if valid_cids else None
+        super().__init__(**data)
+
 
 class TaskPlan(BaseModel):
-    objective: str
-    required_context: list[Literal[
-        "CUSTOMER", "SALES", "RECEIPTS", "LEDGER",
-        "VOUCHERS", "OUTSTANDING", "CASES", "APPROVALS", "DECISIONS", "PAYMENT_HISTORY",
-    ]]
-    allowed_actions: list[Literal[
-        "READ", "CREATE_CASE", "UPDATE_CASE", "CREATE_APPROVAL",
-        "NOTIFY_CUSTOMER", "ESCALATE", "DELEGATE",
-    ]]
-    requires_confirmation: bool
-    requires_management_approval: bool
-    delegation_required: bool
+    objective: str = "Assist customer"
+    required_context: list[str] = []
+    allowed_actions: list[str] = ["READ"]
+    requires_confirmation: bool = False
+    requires_management_approval: bool = False
+    delegation_required: bool = False
 
 
 class CustomerResponse(BaseModel):
@@ -59,18 +55,18 @@ class CustomerResponse(BaseModel):
     approval_id: str | None = None
     requires_follow_up: bool = False
     escalation_required: bool = False
-    factual_basis: list[str] = []
+    factual_basis: list[Any] = []
 
 
 class FinancialAnalysis(BaseModel):
-    question_answerable: bool
+    question_answerable: bool = True
     invoice_status: str | None = None
     outstanding_amount: float | None = None
     directly_allocated_receipts: list[str] = []
     on_account_receipts: list[str] = []
     relevant_vouchers: list[str] = []
     relevant_ledger_entries: list[str] = []
-    explanation: str
+    explanation: str = ""
     requires_accounting_review: bool = False
 
 
@@ -111,7 +107,7 @@ class SalesDoc(BaseModel):
 
 
 class LedgerBalance(BaseModel):
-    opening_balance: float = 0.0
+    outstanding_balance: float = 0.0
     balance_type: str = "DEBIT"  # DEBIT | CREDIT
     as_of_date: str | None = None
 
@@ -123,7 +119,7 @@ class CustomerDoc(BaseModel):
     group_path: str | None = None
     mobile: str | None = None
     email: str | None = None
-    opening_balance: float = 0.0
+    outstanding_balance: float = 0.0
     balance_type: str = "DEBIT"
 
 

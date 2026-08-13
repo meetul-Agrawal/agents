@@ -79,14 +79,19 @@ async def identify_customer(state: CustomerRepState) -> dict:
 
     customer_name = raw["ledgerName"]
     ob = raw.get("balances", {}).get("openingBalance", {})
+    raw_amt = ob.get("amount", 0.0) if ob else 0.0
+    amt = abs(raw_amt)
+    btype = ob.get("type", "DEBIT") if ob else "DEBIT"
+
     customer_context = {
         "ledger_guid": customer_id,
         "ledger_name": customer_name,
         "group_name": raw.get("groupName"),
         "mobile": raw.get("partyDetails", {}).get("mobile"),
         "email": raw.get("partyDetails", {}).get("email"),
-        "opening_balance": ob.get("amount") if ob else None,
-        "balance_type": ob.get("type") if ob else None,
+        "outstanding_balance": amt,
+        "balance_type": btype,
+        "formatted_outstanding": f"₹{amt:,.2f} ({btype})",
     }
     logger.info("customer identified: %s (%s)", customer_name, customer_id)
     return {"customer_name": customer_name, "customer_context": customer_context}

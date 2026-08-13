@@ -27,7 +27,7 @@ TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "get_customer_profile",
-            "description": "Get the authenticated customer's profile and opening balance.",
+            "description": "Get the authenticated customer's profile and current outstanding balance.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -65,7 +65,7 @@ TOOL_SPECS: list[dict] = [
         "type": "function",
         "function": {
             "name": "get_outstanding",
-            "description": "Get the customer's current outstanding/opening balance from the ledger.",
+            "description": "Get the customer's current outstanding balance from the ledger.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
@@ -278,11 +278,15 @@ class ToolExecutor:
         if not raw:
             return {"error": "Customer not found."}
         ob = raw.get("balances", {}).get("openingBalance", {})
+        raw_amt = ob.get("amount", 0.0) if ob else 0.0
+        amt = abs(raw_amt)
+        btype = ob.get("type", "DEBIT") if ob else "DEBIT"
         return {
-            "outstanding_amount": ob.get("amount") if ob else None,
-            "balance_type": ob.get("type") if ob else None,
+            "outstanding_balance": amt,
+            "balance_type": btype,
+            "formatted_outstanding": f"₹{amt:,.2f} ({btype})",
             "as_of_date": str(ob.get("asOfDate")) if ob and ob.get("asOfDate") else None,
-            "note": "This is the authoritative ledger opening balance.",
+            "note": "Authoritative ledger outstanding balance.",
         }
 
     async def _search_cases(self, args: dict) -> dict:

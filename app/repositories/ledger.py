@@ -29,6 +29,9 @@ class CustomerRepository:
 
     async def to_customer_doc(self, raw: dict) -> CustomerDoc:
         ob = raw.get("balances", {}).get("openingBalance", {})
+        raw_amt = ob.get("amount", 0.0) if ob else 0.0
+        amt = abs(raw_amt)
+        btype = ob.get("type", "DEBIT") if ob else "DEBIT"
         return CustomerDoc(
             ledger_guid=raw["ledgerGuid"],
             ledger_name=raw["ledgerName"],
@@ -36,6 +39,6 @@ class CustomerRepository:
             group_path=raw.get("groupPath"),
             mobile=raw.get("partyDetails", {}).get("mobile"),
             email=raw.get("partyDetails", {}).get("email"),
-            opening_balance=ob.get("amount", 0.0) if ob else 0.0,
-            balance_type=ob.get("type", "DEBIT") if ob else "DEBIT",
+            outstanding_balance=amt,
+            balance_type=btype,
         )

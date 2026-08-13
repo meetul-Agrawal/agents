@@ -6,8 +6,17 @@ Run: python cli.py
 """
 
 import asyncio
+import sys
 import uuid
 import argparse
+
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 from app.agents.customer_rep.graph import graph
 from app.repositories.ledger import CustomerRepository
 
