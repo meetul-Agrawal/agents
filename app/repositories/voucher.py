@@ -93,6 +93,27 @@ class SalesRepository:
         return [_parse_sales(d) async for d in cursor]
 
 
+async def compute_outstanding(customer_name: str, opening_balance_amount: float) -> float:
+    """Compute current outstanding by summing all ledger entry movements for the party.
+
+    Tally sign convention for a Sundry Debtor:
+      - Sales ledger entry (party): negative amount = DR to debtor (increases outstanding)
+      - Receipt ledger entry (party): positive amount = CR to debtor (reduces outstanding)
+    outstanding = opening_balance_amount + sum(all party ledger entry amounts)
+    Both are stored with negative=DR, so a negative result = DR balance = they owe us.
+    """
+    col = get_db()["vouchers"]
+    pipeline = [
+        {"$match": {"partyLedgerName": customer_name, "flags.isDeleted": {"$ne": True}}},
+        {"$unwind": "$ledgerEntries"},
+        {"$match": {"ledgerEntries.ledgerName": customer_name}},
+        {"$group": {"_id": None, "total": {"$sum": "$ledgerEntries.amount"}}},
+    ]
+    result = await col.aggregate(pipeline).to_list(1)
+    movements = result[0]["total"] if result else 0.0
+    return opening_balance_amount + movements
+
+
 class ReceiptRepository:
     @property
     def col(self):

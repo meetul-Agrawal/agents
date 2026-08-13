@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from app.repositories.ledger import CustomerRepository
-from app.repositories.voucher import SalesRepository, ReceiptRepository
+from app.repositories.voucher import SalesRepository, ReceiptRepository, compute_outstanding
 from app.repositories.cases import CaseRepository
 from app.repositories.approvals import ApprovalRepository
 from app.services.case import CaseService
@@ -278,15 +278,17 @@ class ToolExecutor:
         if not raw:
             return {"error": "Customer not found."}
         ob = raw.get("balances", {}).get("openingBalance", {})
-        raw_amt = ob.get("amount", 0.0) if ob else 0.0
-        amt = abs(raw_amt)
-        btype = ob.get("type", "DEBIT") if ob else "DEBIT"
+        opening_amt = ob.get("amount", 0.0) if ob else 0.0
+        # Compute current balance: year-opening + all voucher movements for this party
+        # Tally: negative result = DR = customer owes us (outstanding)
+        current = await compute_outstanding(self.customer_name, opening_amt)
+        amt = abs(current)
+        btype = "DEBIT" if current <= 0 else "CREDIT"
         return {
             "outstanding_balance": amt,
             "balance_type": btype,
             "formatted_outstanding": f"₹{amt:,.2f} ({btype})",
-            "as_of_date": str(ob.get("asOfDate")) if ob and ob.get("asOfDate") else None,
-            "note": "Authoritative ledger outstanding balance.",
+            "note": "Current outstanding computed from opening balance + all sales and receipts.",
         }
 
     async def _search_cases(self, args: dict) -> dict:

@@ -24,8 +24,8 @@ class CustomerRepState(TypedDict):
     financial_context: dict
     case_context: dict
 
-    # Tool loop
-    tool_results: Annotated[list[dict], operator.add]
+    # Tool loop — replace semantics (reset each turn via initialize_session)
+    tool_results: list[dict]
     agent_results: list[dict]
 
     pending_action: dict | None
@@ -33,7 +33,7 @@ class CustomerRepState(TypedDict):
 
     response: dict | None              # CustomerResponse
 
-    errors: Annotated[list[str], operator.add]
+    errors: list[str]
 
     # Multi-agent routing fields (future use)
     task_id: str | None

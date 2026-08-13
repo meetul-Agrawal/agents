@@ -27,9 +27,21 @@ _conv_repo = ConversationRepository()
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _msg_history(state: CustomerRepState) -> list[dict]:
-    """Return message history suitable for LLM calls."""
+    """Return message history suitable for LLM calls.
+    ponytail: keep last 20 messages to avoid context bloat with small models.
+    """
     msgs = [{"role": "system", "content": SYSTEM_PROMPT}]
-    msgs.extend(state.get("messages", []))
+    history = state.get("messages", [])
+    # Filter out tool-call pairs that are no longer the most recent exchange
+    # Keep only user/assistant/system messages for older turns; recent tool chains intact
+    visible = []
+    for m in history:
+        role = m.get("role", "")
+        if role in ("user", "assistant", "system"):
+            visible.append(m)
+        elif role == "tool" and visible and visible[-1].get("role") == "assistant":
+            visible.append(m)  # keep tool response paired with its assistant call
+    msgs.extend(visible[-20:])  # cap total visible messages
     return msgs
 
 
@@ -47,15 +59,15 @@ def _summary_context(state: CustomerRepState) -> str:
 # ── Nodes ─────────────────────────────────────────────────────────────────────
 
 async def initialize_session(state: CustomerRepState) -> dict:
-    """Assign task_id; load prior conversation summary if session exists."""
+    """Assign task_id; reset per-turn state; load prior context if new session."""
     task_id = str(uuid.uuid4())
-    prior = await _conv_repo.load_session(state["session_id"])
+    # Reset every turn — these must NOT accumulate across turns
+    updates: dict = {"task_id": task_id, "tool_results": [], "errors": []}
 
-    updates: dict = {"task_id": task_id}
-
-    if prior and not state.get("messages"):
-        # Resume: inject summary so LLM has context without full history
-        if prior.get("messages"):
+    if not state.get("messages"):
+        # Brand-new session — check for prior persisted context
+        prior = await _conv_repo.load_session(state["session_id"])
+        if prior and prior.get("messages"):
             summary_msg = {
                 "role": "system",
                 "content": f"[Prior conversation context: {len(prior['messages'])} messages. "
@@ -83,15 +95,14 @@ async def identify_customer(state: CustomerRepState) -> dict:
     amt = abs(raw_amt)
     btype = ob.get("type", "DEBIT") if ob else "DEBIT"
 
+    # Do NOT pre-populate outstanding here — the tool computes it correctly from vouchers.
+    # Putting a stale opening-balance figure here causes the LLM to answer without calling the tool.
     customer_context = {
         "ledger_guid": customer_id,
         "ledger_name": customer_name,
         "group_name": raw.get("groupName"),
         "mobile": raw.get("partyDetails", {}).get("mobile"),
         "email": raw.get("partyDetails", {}).get("email"),
-        "outstanding_balance": amt,
-        "balance_type": btype,
-        "formatted_outstanding": f"₹{amt:,.2f} ({btype})",
     }
     logger.info("customer identified: %s (%s)", customer_name, customer_id)
     return {"customer_name": customer_name, "customer_context": customer_context}
