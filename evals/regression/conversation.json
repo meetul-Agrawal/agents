@@ -1,11 +1,11 @@
 {
-  "suite": "resolution",
-  "started_at": "2026-08-14T07:42:42.113624+00:00",
-  "total": 12,
-  "passed": 12,
+  "suite": "conversation",
+  "started_at": "2026-08-14T07:42:43.839815+00:00",
+  "total": 13,
+  "passed": 13,
   "pass_rate": 1.0,
   "cases": {
-    "RES-001": {
+    "CNV-001": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -18,7 +18,7 @@
         }
       ]
     },
-    "RES-002": {
+    "CNV-002": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -31,7 +31,7 @@
         }
       ]
     },
-    "RES-003": {
+    "CNV-003": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -44,7 +44,7 @@
         }
       ]
     },
-    "RES-004": {
+    "CNV-004": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -57,7 +57,7 @@
         }
       ]
     },
-    "RES-005": {
+    "CNV-005": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -70,7 +70,7 @@
         }
       ]
     },
-    "RES-006": {
+    "CNV-006": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -83,7 +83,7 @@
         }
       ]
     },
-    "RES-007": {
+    "CNV-007": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -96,7 +96,7 @@
         }
       ]
     },
-    "RES-008": {
+    "CNV-008": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -109,7 +109,7 @@
         }
       ]
     },
-    "RES-009": {
+    "CNV-009": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -122,7 +122,7 @@
         }
       ]
     },
-    "RES-010": {
+    "CNV-010": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -135,7 +135,7 @@
         }
       ]
     },
-    "RES-011": {
+    "CNV-011": {
       "passed": true,
       "score": 1.0,
       "error": null,
@@ -148,7 +148,20 @@
         }
       ]
     },
-    "RES-012": {
+    "CNV-012": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "CNV-013": {
       "passed": true,
       "score": 1.0,
       "error": null,

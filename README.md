@@ -5,8 +5,9 @@ sf_tenant_6a33b5b2091da2fb4a7c3de4
 Agentic orchestration over Tally data in MongoDB. Vision: `Docs/01vision.md`.
 Roadmap and evaluation gates: `Docs/02phasesWithEval.md`.
 
-Status: **Phase 1 complete** — contracts frozen, evaluation foundation running,
-Customer 360 answering from real data. No agent is implemented yet.
+Status: **Phase 2 complete** — contracts frozen, evaluation foundation running,
+Customer 360 answering from real data, and email/chat/webhook normalized onto
+one conversation model. No agent is implemented yet.
 
 ## Layout
 
@@ -15,6 +16,7 @@ src/ca/contracts.py     frozen boundary types (Customer, Outstanding, AgentResul
 src/ca/registry.py      agent + tool declarations, permissions, action modes
 src/ca/config.py        settings, read-only tenant DB guard, app DB handle
 src/ca/customer360.py   resolution, outstanding, ledger, timeline, Customer 360
+src/ca/inbox.py         email/chat/webhook parsing, threading, dedupe, ingestion
 src/ca/data_quality.py  the book's data-quality checks
 src/ca/evals.py         dataset loader, graders, runner, report, regression
 evals/datasets/         .jsonl cases, one directory per suite
@@ -27,8 +29,8 @@ scripts/gen_golden.js   independent mongosh implementation that produces the gol
 
 ```bash
 uv sync
-uv run pytest                                  # 63 tests: unit, negative, live integration
-uv run scripts/run_evals.py all                # routing + resolution + customer360
+uv run pytest                                  # 114 tests: unit, negative, live integration
+uv run scripts/run_evals.py all                # routing + resolution + conversation + customer360
 uv run scripts/run_evals.py all --accept       # store new baselines
 uv run python -m ca.data_quality               # data-quality report (exit 1 on any P0)
 ```
@@ -78,6 +80,27 @@ rules. The suite passes only when two independent implementations agree.
   customer costs a ~280ms collection scan. Fine per conversation; add
   `{"ledgerEntries.ledgerName": 1}` before any batch fan-out.
 
+## How a message becomes a conversation
+
+```python
+conversation, message, created = inbox.ingest("email", raw_rfc822)
+```
+
+`created is False` means this delivery was already ingested — the caller must
+stop, or a retry becomes a second promise or a second reply. Deduplication is a
+unique index on `(channel, external_id)` in the app database, not an in-process
+check. A delivery with no id gets a content hash, so retries still collapse.
+
+Threading is tried strongest signal first: explicit `conversation_id`, then
+`In-Reply-To`/`References`, then a thread key (email subject, chat session id),
+then a new conversation. A subject line alone only re-opens a thread for the
+**same** customer within 30 days — otherwise every "Re: Invoice" in the mailbox
+would merge into one.
+
+The thread carries identity, not the sender line: a customer replying from a new
+address stays on their conversation, and an anonymous thread back-fills its
+customer as soon as one message identifies them.
+
 ## Known data findings
 
 From `uv run python -m ca.data_quality` against this book:
@@ -97,6 +120,7 @@ a query matches more than one customer.
 
 ## Next
 
-Phase 2 — input + conversation layer: normalize email/chat/webhook into one
-`Message`, resolve threads, dedupe, and wire the conversation resolver onto the
-customer resolver built here.
+Phase 3 — Customer Assist orchestrator: the LangGraph state machine
+(`load_context → classify_intent → create_plan → route → execute → review →
+respond → update_state`) over mock agents, graded by the routing suite that is
+already in place.

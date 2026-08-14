@@ -52,6 +52,46 @@ def _resolution_run(case: E.EvalCase) -> dict:
         return {"error": "not_found"}
 
 
+def _conversation_run(case: E.EvalCase) -> dict:
+    """Replay a scenario's deliveries into a scratch database and describe the
+    state they produced."""
+    from ca import inbox
+    from ca.config import _client
+
+    db = _client()["customer_assist_evals"]
+    _client().drop_database("customer_assist_evals")
+    inbox.ensure_indexes(db)
+
+    conversations, messages, created, threaded, resolved_by = [], [], [], [], []
+    for step in case.context["steps"]:
+        conversation, message, was_created = inbox.ingest(step["channel"], step["payload"], db=db)
+        conversations.append(conversation)
+        messages.append(message)
+        created.append(was_created)
+        threaded.append(message.metadata.get("thread_resolved_by"))
+        resolved_by.append(message.metadata.get("resolved_by"))
+
+    ordered = inbox.conversation_messages(conversations[-1].conversation_id, db=db)
+    stored = db["conversations"].find_one(
+        {"conversation_id": conversations[-1].conversation_id}
+    )
+    result = {
+        "conversations": db["conversations"].count_documents({}),
+        "messages": db["messages"].count_documents({}),
+        "created": created,
+        "thread_resolved_by": threaded,
+        "resolved_by": resolved_by,
+        "customer_resolved": [m.customer_id is not None for m in messages],
+        "customer_ids": [m.customer_id for m in messages],
+        "channels": [m.channel for m in messages],
+        "conversation_customer_id": stored.get("customer_id"),
+        "chronological": [m.timestamp for m in ordered] == sorted(m.timestamp for m in ordered),
+        "first_message_text": ordered[0].text if ordered else None,
+    }
+    _client().drop_database("customer_assist_evals")  # leave no scratch state behind
+    return result
+
+
 SUITES = {
     "routing": (
         _routing_oracle,
@@ -60,6 +100,24 @@ SUITES = {
     "resolution": (
         _resolution_run,
         [E.exact_match("customer_id", "error")],
+    ),
+    "conversation": (
+        _conversation_run,
+        [
+            E.exact_match(
+                "conversations",
+                "messages",
+                "created",
+                "thread_resolved_by",
+                "resolved_by",
+                "customer_resolved",
+                "customer_ids",
+                "channels",
+                "conversation_customer_id",
+                "chronological",
+                "first_message_text",
+            )
+        ],
     ),
     "customer360": (
         _customer360_run,
