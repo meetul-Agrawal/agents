@@ -16,12 +16,20 @@ Two rules the graph enforces, not the agents:
   `AgentResult` becomes a *failed* result. It never takes the run down, and it
   never silently looks like success.
 
-Intent classification defaults to the deterministic rules (`classify_rules`).
-`classify_llm` is graded by the same dataset and can be swapped in per run.
-Measured on the 48-case routing set: rules 100%, llama-3.1-8b 65%, including
-two adversarial cases where the model got the approval requirement wrong. The
-rules stay the default until a model beats them, and `enforce_approval_gate`
-holds either way.
+Intent classification is `classify_llm` when a provider is configured, and
+`classify_rules` otherwise — the system must still work with no model at all.
+
+Measured on 128 routing cases (`Docs/03phase3-evaluation.md`):
+
+    rules              64.1% routing, 68.8% safety
+    llama-3.1-8b       78.1% routing, 86.7% safety
+
+The rules scored 100% on the 48 cases they were written against and 64% once 80
+unseen cases were added — they had memorised their own test set. They now exist
+only as the offline fallback, not as the thing to tune.
+
+Post-hoc regex "guards" that rewrote the model's answer were deleted: measured
+over 128 cases they fixed 5 and broke 5, for 116 lines and no gain.
 """
 
 from __future__ import annotations
@@ -112,10 +120,11 @@ INTENT_RULES: list[tuple[str, str, re.Pattern[str]]] = [
 # message, not a clause: "What discount did you give X? Give me the same." puts
 # the request and the party it refers to in different sentences.
 CROSS_CUSTOMER = re.compile(
-    r"\b(discount|price|rate|terms|ledger|balance|outstanding|health|rating|credit\s+limits?|contact\s+numbers?)\b.{0,60}\b(you\s+(give|gave)|given\s+to|offered|of|for|all)\b.{0,60}"
-    r"\b(traders|industries|enterprises|company|firm|store|kirana|ltd|pvt|bros|brothers|associates|corp|corporation|agency|agencies|all\s+dealers|other\s+dealers)\b"
-    r"|\bsame\s+(discount|price|rate|terms|deal)\b"
-    r"|\b(credit\s+rating|health\s+score)\b.{0,40}\b(khandelwal|sharma|agarwal|gupta|singh|kumar|bros|brothers|traders)\b",
+    r"\b(discount|price|rate|terms|ledger|balance|outstanding|health|rating|credit\s+limit)\b"
+    r".{0,60}\b(you\s+(give|gave)|given\s+to|offered|assign(ed)?\s+to|for|of)\b.{0,60}"
+    r"\b(traders|industries|enterprises|company|firm|store|kirana|ltd|pvt|bros|brothers|"
+    r"associates|agency|agencies|dealers)\b"
+    r"|\bsame\s+(discount|price|rate|terms|deal)\b",
     re.I | re.S,
 )
 
@@ -232,7 +241,20 @@ def classify_rules(text: str, context: dict[str, Any] | None = None) -> list[Int
         ]
         if not hits:
             continue
+
+        # Suppression is per clause, not per message. "Write off my balance" is
+        # one ask; "I paid 2 lakh but it still shows overdue" is two, and a
+        # whole-message check gets one of those wrong whichever way it goes.
+        if any(name not in WEAK_INTENTS for name, _, _ in hits):
+            hits = [h for h in hits if h[0] not in WEAK_INTENTS]
+
+        # One intent per agent per clause: INTENT_RULES is ordered most
+        # specific first, so the earliest rule wins.
+        per_agent: dict[str, tuple[str, str, re.Match[str]]] = {}
         for name, agent, match in hits:
+            per_agent.setdefault(agent, (name, agent, match))
+
+        for name, agent, match in per_agent.values():
             if name in seen:
                 continue
             seen.add(name)
@@ -244,13 +266,6 @@ def classify_rules(text: str, context: dict[str, Any] | None = None) -> list[Int
                     reason=f"matched '{match.group(0)}' in clause",
                 )
             )
-
-    # If an actionable intent is present, drop weak enquiry intents that only
-    # describe the action's context: "return 20 pieces from invoice 327" is a
-    # return, not a return plus a request for the invoice.
-    action_intents = [i for i in found if i.name not in WEAK_INTENTS]
-    if action_intents and len(split_clauses(text)) <= 1:
-        found = action_intents
 
     if CROSS_CUSTOMER.search(text):
         found.append(
@@ -434,111 +449,6 @@ def classify_llm(text: str, context: dict[str, Any] | None = None) -> list[Inten
             )
         )
 
-    # 1. Guard against spurious document_request if not explicitly requesting document sharing.
-    doc_request_triggers = re.compile(r"\b(send|share|email|mail|whatsapp|forward|resend|copy\b|pdf\b|printout\b|bhejo\b|bhejiye\b|dikhao\b|dikhaye\b|share\s+karo)\b", re.I)
-    if any(i.name not in WEAK_INTENTS for i in intents):
-        if not doc_request_triggers.search(text):
-            intents = [i for i in intents if i.name != "document_request"]
-
-    # 2. Guard against spurious call_prep unless explicit internal preparation terms exist.
-    call_prep_triggers = re.compile(r"\b(call\s+(brief|prep|notes?)|talking\s+points|discussion\s+notes|before\s+(my|the|a)\s+call|prepare\s+(a\s+)?brief|field\s+review)\b", re.I)
-    if any(i.name == "call_prep" for i in intents):
-        if not call_prep_triggers.search(text):
-            intents = [i for i in intents if i.name != "call_prep"]
-
-    # 3. Guard against spurious credit_note_request unless explicitly requested.
-    credit_note_triggers = re.compile(r"\b(credit\s+note|cn\b|credit\s+memo)\b", re.I)
-    if any(i.name == "credit_note_request" for i in intents):
-        if not credit_note_triggers.search(text):
-            intents = [i for i in intents if i.name != "credit_note_request"]
-
-    # 4. If interest waiver or debt write-off is explicitly requested, ensure settlement_request is included.
-    settlement_triggers = re.compile(r"\b(interest\s+(maaf|waiver?|waive)|write[- ]off|debt\s+waiver|sanction\s+a\s+.*write[- ]off)\b", re.I)
-    if settlement_triggers.search(text) and not any(i.name == "settlement_request" for i in intents):
-        intents.append(
-            Intent(
-                name="settlement_request",
-                confidence=0.95,
-                entities={"agent": "sa4_approval"},
-                reason="Explicit debt write-off or interest waiver detected",
-            )
-        )
-
-    # 4b. If clear payment promise commitment exists, ensure payment_promise is present.
-    promise_triggers = re.compile(r"\b(will\s+(release|pay|clear|transfer|remit|deposit)\b.{0,30}\b(\d+|amount|rupees)|by\s+next\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month))\b", re.I)
-    if promise_triggers.search(text) and not any(i.name == "payment_promise" for i in intents):
-        intents = [i for i in intents if i.name not in WEAK_INTENTS]
-        intents.append(Intent(name="payment_promise", confidence=0.95, entities={"agent": "sa2_recovery"}, reason="Payment commitment detected"))
-
-    # 5. If sales_return is present for expired/unsold/buy-back goods, drop incidental dispute/settlement unless explicit terms exist.
-    if any(i.name == "sales_return" for i in intents):
-        if any(i.name == "dispute" for i in intents):
-            if not re.search(r"\b(defective|damaged|leakage|broken|faulty|wrong\s+item|substandard)\b", text, re.I):
-                intents = [i for i in intents if i.name != "dispute"]
-        if any(i.name == "settlement_request" for i in intents):
-            if not re.search(r"\b(waiver?|write[- ]off|debt|interest\s+maaf|credit\s+limit)\b", text, re.I):
-                intents = [i for i in intents if i.name != "settlement_request"]
-
-    # 5b. If defective goods from invoice are reported, ensure dispute intent is captured.
-    if re.search(r"\b(\d+\s+(units|pieces|cartons|boxes|items|bags)?\s*(defective|damaged|broken|short|wrong|leakage)|defective\s+from\s+INV)\b", text, re.I):
-        if not any(i.name == "dispute" for i in intents):
-            intents.append(Intent(name="dispute", confidence=0.95, entities={"agent": "sa3_dispute"}, reason="Defective product dispute detected"))
-
-    # 6. If human approval intent (credit note or write-off) is requested, only preserve dispute if specific defect/shortage/wrong-rate claims exist.
-    if any(i.name in HUMAN_APPROVAL_INTENTS for i in intents) and any(i.name == "dispute" for i in intents):
-        if re.search(r"\b(write[- ]off|debt\s+waiver|principal\s+waiver|sanction\s+a\s+.*write[- ]off|disputed\s+(amount|balance|sum))\b", text, re.I):
-            intents = [i for i in intents if i.name != "dispute"]
-        elif not re.search(r"\b(wrong|incorrect|mismatch|excess|short\s+(supply|delivery)|shortage|shortfall|defective|damaged|broken|leakage|galti|galat)\b", text, re.I):
-            intents = [i for i in intents if i.name != "dispute"]
-
-    # 6b. If document request is present, drop dispute unless quality/damage/rate claims exist.
-    if any(i.name == "document_request" for i in intents) and any(i.name == "dispute" for i in intents):
-        if not re.search(r"\b(damaged?|broken|leakage|wrong|incorrect|mismatch|excess|short\s+(supply|delivery)|faulty)\b", text, re.I):
-            intents = [i for i in intents if i.name != "dispute"]
-
-    # 7. If payment_claim is present, "mark settled" / "ledger update karo" is part of the payment claim, not separate debt write-off or balance enquiry.
-    if any(i.name == "payment_claim" for i in intents):
-        if any(i.name == "settlement_request" for i in intents):
-            if re.search(r"\b(paid|transferred|deposit|bhej\s+diya)\b", text, re.I) and not re.search(r"\b(waive|discount|write[- ]off|interest\s+maaf)\b", text, re.I):
-                intents = [i for i in intents if i.name != "settlement_request"]
-        if any(i.name == "outstanding_enquiry" for i in intents):
-            if not re.search(r"\b(baki\b.{0,20}\bkitna|kitna\b.{0,20}\bbaki|kitna\s+balance|outstanding\s+amount|pending\s+balance|shows\s+pending|still\s+shows|how\s+much\s+(is\s+pending|due|owed)|baki\s+bacha)\b", text, re.I):
-                intents = [i for i in intents if i.name != "outstanding_enquiry"]
-
-    # 8. If conditional discount waiver is requested upon payment, keep both if firm commitment exists; drop promise if purely hypothetical ("agar ... to kya").
-    if any(i.name in HUMAN_APPROVAL_INTENTS for i in intents) and any(i.name in ("payment_claim", "payment_promise") for i in intents):
-        if re.search(r"\b(agar\s+hum\s+.*to\s+kya|kya\s+.*waiver\s+approve\s+ho\s+sakta\s+hai|could\s+you\s+waive)\b", text, re.I) and not re.search(r"\b(will\s+(remit|pay|clear|transfer)|by\s+(next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday|\d+(st|nd|rd|th)))\b", text, re.I):
-            intents = [i for i in intents if i.name not in ("payment_claim", "payment_promise")]
-
-    # 9. If credit limit extension is requested, drop incidental order_capture unless explicit supply verbs exist.
-    if any(i.name == "settlement_request" for i in intents) and any(i.name == "order_capture" for i in intents):
-        if not re.search(r"\b(book|dispatch|supply|deliver|bhejo|bhejiye)\b.{0,30}\b(\d+\s+(cartons|bags|bori|boxes|pieces|units|rolls|bottles|tins)|cement|oil|pipes|cables|syrup)\b|\b\d+\s+(cartons|bags|bori|boxes|pieces|units|rolls|bottles|tins)\b.{0,30}\b(dispatch|book|supply|deliver|bhejo)\b", text, re.I):
-            intents = [i for i in intents if i.name != "order_capture"]
-
-    # 9b. When dispute or sales_return or order_capture is present, drop weak outstanding_enquiry unless explicit balance enquiry terms exist.
-    if any(i.name in ("dispute", "sales_return", "order_capture") for i in intents) and any(i.name == "outstanding_enquiry" for i in intents):
-        if not re.search(r"\b(ledger|balance|hisab|liability|kitna\b.{0,20}\bbaki|baki\b.{0,20}\bkitna|outstanding|statement)\b", text, re.I):
-            intents = [i for i in intents if i.name != "outstanding_enquiry"]
-
-    # 10. Remap accidental cross_customer_request to health_enquiry / standard enquiry if asking about own account.
-    if any(i.name == "cross_customer_request" for i in intents):
-        if re.search(r"\b(is\s+party|this\s+(party|dealer|customer)|my\s+|our\s+|hamar[aei])\b", text, re.I) or not CROSS_CUSTOMER.search(text):
-            remapped: list[Intent] = []
-            for i in intents:
-                if i.name == "cross_customer_request":
-                    if re.search(r"\b(health|score|rating|grade|risk)\b", text, re.I):
-                        remapped.append(Intent(name="health_enquiry", confidence=i.confidence, entities={"agent": "sa7_health"}, reason=i.reason))
-                    else:
-                        remapped.append(Intent(name="outstanding_enquiry", confidence=i.confidence, entities={"agent": "sa1_general"}, reason=i.reason))
-                else:
-                    remapped.append(i)
-            intents = remapped
-
-    # 11. If an actionable intent is present in a single-clause message, drop subsidiary weak enquiry intents.
-    action_intents = [i for i in intents if i.name not in WEAK_INTENTS]
-    if action_intents and len(split_clauses(text)) <= 1:
-        intents = action_intents
-
     if not intents:
         return classify_rules(text, context)
 
@@ -553,6 +463,26 @@ def classify_llm(text: str, context: dict[str, Any] | None = None) -> list[Inten
 
 
 Classifier = Callable[[str, dict[str, Any] | None], list[Intent]]
+
+
+def default_classifier() -> Classifier:
+    """The model when one is configured, the rules when not.
+
+    Measured over 128 cases the model wins on every category that matters —
+    Hinglish 23/32 vs 7/32, disputes 13/14 vs 6/14, recovery 11/15 vs 6/15 — so
+    it does the identifying. The rules remain a real fallback, not a stub: with
+    no provider the whole pipeline still runs.
+
+    Set CA_CLASSIFIER=rules to pin the deterministic path (tests do this, so the
+    suite neither hits the network nor inherits the model's run-to-run drift).
+    """
+    import os
+
+    from . import llm
+
+    if os.getenv("CA_CLASSIFIER", "").lower() == "rules" or not llm.available():
+        return classify_rules
+    return classify_llm
 
 
 # --------------------------------------------------------------------------
@@ -779,7 +709,7 @@ def classify_intent(
     state: CustomerAssistState, config: RunnableConfig = None
 ) -> dict[str, Any]:
     config = _config(config)
-    classifier: Classifier = config.get("classifier", classify_rules)
+    classifier: Classifier = config.get("classifier") or default_classifier()
     context = config.get("case_context", {})
     intents = classifier(state.message, context)
     # Merge, never replace: message_id and context_error are already in here.
@@ -1026,7 +956,7 @@ def handle(
 ) -> CustomerAssistState:
     """Run one message through the graph and return the final state."""
     ca_config: dict[str, Any] = {
-        "classifier": classifier or classify_rules,
+        "classifier": classifier or default_classifier(),
         "case_context": case_context or {},
         "timeout": timeout,
         "db": db,

@@ -61,6 +61,12 @@ def available() -> bool:
     return bool(api_key())
 
 
+# A provider that hangs must not hang the caller. The OpenAI SDK defaults to a
+# 600s timeout with retries, which stalls a whole eval run on one bad request.
+REQUEST_TIMEOUT = float(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "1"))
+
+
 def _client() -> Any:
     try:
         from openai import OpenAI
@@ -69,7 +75,12 @@ def _client() -> Any:
     key = api_key()
     if not key:
         raise LLMUnavailable("no NVIDIA_API_KEY or OPENAI_API_KEY configured")
-    return OpenAI(api_key=key, base_url=base_url())
+    return OpenAI(
+        api_key=key,
+        base_url=base_url(),
+        timeout=REQUEST_TIMEOUT,
+        max_retries=MAX_RETRIES,
+    )
 
 
 _last_call_time: float = 0.0
