@@ -72,6 +72,23 @@ def _client() -> Any:
     return OpenAI(api_key=key, base_url=base_url())
 
 
+_last_call_time: float = 0.0
+
+
+def _pace_request() -> None:
+    global _last_call_time
+    try:
+        rpm = float(os.getenv("NIM_RATE_LIMIT_RPM", "40"))
+    except ValueError:
+        rpm = 40.0
+    interval = (60.0 / rpm) + 0.05
+    import time
+    elapsed = time.time() - _last_call_time
+    if elapsed < interval:
+        time.sleep(interval - elapsed)
+    _last_call_time = time.time()
+
+
 def complete_structured(
     schema: type[T],
     system: str,
@@ -88,6 +105,8 @@ def complete_structured(
     does not implement the same one. Switch to native structured output when the
     provider supports it.
     """
+    import time
+
     client = _client()
     # Small instruct models happily echo a JSON *schema* back when shown one, so
     # the example carries the shape and the schema is only a reference.
@@ -99,16 +118,26 @@ def complete_structured(
         prompt += f"\nA valid response looks exactly like this:\n{json.dumps(shape)}"
     else:
         prompt += f"\nIt must satisfy this schema:\n{json.dumps(schema.model_json_schema())}"
-    try:
-        response = client.chat.completions.create(
-            model=MODELS[capability],
-            messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
-            temperature=temperature,
-            response_format={"type": "json_object"},
-        )
-        content = response.choices[0].message.content or ""
-    except Exception as exc:  # provider errors are not the caller's problem
-        raise LLMUnavailable(f"{type(exc).__name__}: {exc}") from exc
+
+    max_retries = 5
+    retries = 0
+    content = ""
+    while True:
+        _pace_request()
+        try:
+            response = client.chat.completions.create(
+                model=MODELS[capability],
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                temperature=temperature,
+                response_format={"type": "json_object"},
+            )
+            content = response.choices[0].message.content or ""
+            break
+        except Exception as exc:  # provider errors are not the caller's problem
+            retries += 1
+            if retries > max_retries:
+                raise LLMUnavailable(f"{type(exc).__name__}: {exc}") from exc
+            time.sleep(2.0 * (2 ** (retries - 1)))
 
     try:
         return schema.model_validate_json(content)
