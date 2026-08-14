@@ -1,0 +1,427 @@
+"""Phase 0 — frozen contracts for Customer Assist V1.
+
+Every model here is a boundary type: it crosses agent, tool, persistence or
+evaluation lines. Business logic does not belong in this file.
+
+Identity note (grounded in the tenant data, not invented):
+  A customer IS a Sundry Debtors ledger. `customer_id` is the ledger `_id`
+  string; `ledger_name` is the join key, because vouchers carry `ledgerName`
+  and always leave `ledgerId` null.
+"""
+
+from __future__ import annotations
+
+import re
+import uuid
+from datetime import date, datetime, timezone
+from typing import Annotated, Any, Literal
+
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
+
+# --------------------------------------------------------------------------
+# Identifiers
+# --------------------------------------------------------------------------
+
+ID_PREFIXES = {
+    "conversation": "CNV",
+    "message": "MSG",
+    "agent_run": "RUN",
+    "agent_task": "TSK",
+    "tool_call": "TCL",
+    "event": "EVT",
+    "case": "CASE",
+    "dispute": "DSP",
+    "approval": "APR",
+    "promise": "PRM",
+    "health": "HLT",
+    "timeline": "TML",
+    "eval_case": "EVL",
+}
+
+_ID_RE = re.compile(r"^[A-Z]{3,4}-\d{4}-[0-9a-f]{12}$")
+
+
+def new_id(kind: str, *, now: datetime | None = None) -> str:
+    """`DSP-2026-3f2a91c0b4de`. Sortable-by-year, no counter collection needed."""
+    if kind not in ID_PREFIXES:
+        raise ValueError(f"unknown id kind: {kind!r}")
+    year = (now or utcnow()).year
+    return f"{ID_PREFIXES[kind]}-{year}-{uuid.uuid4().hex[:12]}"
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+Id = Annotated[str, StringConstraints(min_length=1)]
+NonEmpty = Annotated[str, StringConstraints(min_length=1, strip_whitespace=True)]
+
+
+class Contract(BaseModel):
+    """Base: strict — unknown fields are an error, not a silent pass."""
+
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+
+# --------------------------------------------------------------------------
+# Enumerations shared across agents
+# --------------------------------------------------------------------------
+
+Channel = Literal["email", "chat", "webhook", "call"]
+
+AgentName = Literal[
+    "customer_assist",
+    "sa1_general",
+    "sa2_recovery",
+    "sa3_dispute",
+    "sa4_approval",
+    "sa5_order",
+    "sa6_return",
+    "sa7_health",
+    "sa8_call_prep",
+]
+AGENT_NAMES: frozenset[str] = frozenset(AgentName.__args__)
+
+ResultStatus = Literal[
+    "completed",
+    "needs_information",
+    "needs_agent",
+    "needs_approval",
+    "needs_human",
+    "failed",
+]
+
+ActionMode = Literal["auto", "auto_inform", "human_approval"]
+
+EventType = Literal[
+    "CUSTOMER_CREATED",
+    "MESSAGE_RECEIVED",
+    "MESSAGE_SENT",
+    "ORDER_CREATED",
+    "ORDER_UPDATED",
+    "PAYMENT_RECEIVED",
+    "PAYMENT_PARTIAL",
+    "PAYMENT_PROMISE_CREATED",
+    "PAYMENT_PROMISE_MODIFIED",
+    "PAYMENT_PROMISE_MISSED",
+    "RECOVERY_CONTACTED",
+    "DISPUTE_CREATED",
+    "DISPUTE_UPDATED",
+    "DISPUTE_CLOSED",
+    "APPROVAL_CREATED",
+    "APPROVAL_APPROVED",
+    "APPROVAL_REJECTED",
+    "RETURN_REQUESTED",
+    "RETURN_APPROVED",
+    "CREDIT_NOTE_CREATED",
+    "HEALTH_SCORE_UPDATED",
+    "SALES_CALL_CREATED",
+    "SALES_CALL_COMPLETED",
+]
+EVENT_TYPES: frozenset[str] = frozenset(EventType.__args__)
+
+
+# --------------------------------------------------------------------------
+# Customer / Customer 360
+# --------------------------------------------------------------------------
+
+
+class Customer(Contract):
+    customer_id: Id  # ledgers._id
+    ledger_name: NonEmpty  # join key into vouchers.ledgerName / partyLedgerName
+    company_id: Id
+    display_name: NonEmpty
+    ledger_code: str | None = None
+    group_path: str | None = None
+    email: str | None = None
+    mobile: str | None = None
+    gstin: str | None = None
+    state: str | None = None
+    opening_balance: float = 0.0
+
+
+class Customer360(Contract):
+    """The logical state the orchestrator reasons over. Sections are filled in
+    Phase 1; Phase 0 only freezes the shape."""
+
+    customer: Customer
+    financial: dict[str, Any] = Field(default_factory=dict)
+    commercial: dict[str, Any] = Field(default_factory=dict)
+    communication: dict[str, Any] = Field(default_factory=dict)
+    relationship: dict[str, Any] = Field(default_factory=dict)
+    operational: dict[str, Any] = Field(default_factory=dict)
+    agent_state: dict[str, Any] = Field(default_factory=dict)
+    built_at: datetime = Field(default_factory=utcnow)
+
+
+# --------------------------------------------------------------------------
+# Conversation / Message
+# --------------------------------------------------------------------------
+
+
+class Message(Contract):
+    message_id: Id = Field(default_factory=lambda: new_id("message"))
+    conversation_id: Id
+    customer_id: Id | None = None
+    channel: Channel
+    direction: Literal["inbound", "outbound"]
+    text: str
+    timestamp: datetime = Field(default_factory=utcnow)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    # External id (email Message-ID, webhook delivery id) used for dedupe.
+    external_id: str | None = None
+
+
+class Conversation(Contract):
+    conversation_id: Id = Field(default_factory=lambda: new_id("conversation"))
+    customer_id: Id | None = None
+    channel: Channel
+    subject: str | None = None
+    status: Literal["open", "waiting", "closed"] = "open"
+    thread_key: str | None = None  # email thread id / chat session id
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+# --------------------------------------------------------------------------
+# Tools and agents
+# --------------------------------------------------------------------------
+
+
+class ToolSpec(Contract):
+    name: NonEmpty
+    purpose: NonEmpty
+    access: Literal["read", "write"]
+    mode: ActionMode = "auto"
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolCall(Contract):
+    tool_call_id: Id = Field(default_factory=lambda: new_id("tool_call"))
+    tool: NonEmpty
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    ok: bool = True
+    error: str | None = None
+    latency_ms: int | None = None
+
+
+class AgentSpec(Contract):
+    """The agent contract from Phase 0 of the roadmap."""
+
+    name: AgentName
+    purpose: NonEmpty
+    tools: list[str] = Field(default_factory=list)
+    readable_state: list[str] = Field(default_factory=list)
+    writable_state: list[str] = Field(default_factory=list)
+    escalation_rules: list[str] = Field(default_factory=list)
+
+
+class AgentTask(Contract):
+    agent_task_id: Id = Field(default_factory=lambda: new_id("agent_task"))
+    agent: AgentName
+    action: NonEmpty
+    reason: str = ""
+    priority: int = Field(default=1, ge=1, le=5)
+    requires_human: bool = False
+    depends_on: list[str] = Field(default_factory=list)
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+
+class ProposedAction(Contract):
+    """What an agent wants done. Shadow mode executes nothing but these."""
+
+    type: NonEmpty
+    mode: ActionMode = "auto"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    executed: bool = False
+
+
+class AgentResult(Contract):
+    agent_run_id: Id = Field(default_factory=lambda: new_id("agent_run"))
+    agent: AgentName
+    agent_task_id: Id | None = None
+    status: ResultStatus
+    summary: str = ""
+    actions: list[ProposedAction] = Field(default_factory=list)
+    tool_calls: list[ToolCall] = Field(default_factory=list)
+    customer_message: str | None = None
+    next_agent: AgentName | None = None
+    error: str | None = None
+
+    @model_validator(mode="after")
+    def _failed_needs_error(self) -> "AgentResult":
+        if self.status == "failed" and not self.error:
+            raise ValueError("status='failed' requires an error")
+        return self
+
+
+class ExecutionPlan(Contract):
+    tasks: list[AgentTask] = Field(default_factory=list)
+
+    @field_validator("tasks")
+    @classmethod
+    def _deps_resolve(cls, tasks: list[AgentTask]) -> list[AgentTask]:
+        ids = {t.agent_task_id for t in tasks}
+        for t in tasks:
+            unknown = set(t.depends_on) - ids
+            if unknown:
+                raise ValueError(f"task {t.agent_task_id} depends on unknown {unknown}")
+        return tasks
+
+    @property
+    def agents(self) -> set[str]:
+        return {t.agent for t in self.tasks}
+
+
+# --------------------------------------------------------------------------
+# Understanding
+# --------------------------------------------------------------------------
+
+
+class Intent(Contract):
+    name: NonEmpty
+    confidence: float = Field(ge=0.0, le=1.0)
+    entities: dict[str, Any] = Field(default_factory=dict)
+    reason: str = ""
+
+
+# --------------------------------------------------------------------------
+# Operational records (all persisted in the app DB, never the tenant DB)
+# --------------------------------------------------------------------------
+
+
+class Event(Contract):
+    event_id: Id = Field(default_factory=lambda: new_id("event"))
+    customer_id: Id
+    type: EventType
+    source: NonEmpty
+    timestamp: datetime = Field(default_factory=utcnow)
+    conversation_id: Id | None = None
+    agent_run_id: Id | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class Case(Contract):
+    case_id: Id = Field(default_factory=lambda: new_id("case"))
+    customer_id: Id
+    type: Literal["dispute", "task", "other"] = "dispute"
+    status: Literal["open", "investigating", "waiting", "resolved", "closed"] = "open"
+    priority: Literal["low", "normal", "high", "critical"] = "normal"
+    title: NonEmpty
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+    actions: list[ProposedAction] = Field(default_factory=list)
+    owner: str | None = None
+    resolution: str | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class Approval(Contract):
+    approval_id: Id = Field(default_factory=lambda: new_id("approval"))
+    customer_id: Id
+    type: Literal[
+        "special_discount",
+        "settlement",
+        "credit_limit",
+        "large_credit_note",
+        "write_off",
+        "exceptional_terms",
+    ]
+    status: Literal["pending", "approved", "rejected", "expired"] = "pending"
+    requested_by: AgentName
+    amount: float | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
+    recommendation: str = ""
+    decided_by: str | None = None
+    decided_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class PaymentPromise(Contract):
+    promise_id: Id = Field(default_factory=lambda: new_id("promise"))
+    customer_id: Id
+    amount: float = Field(gt=0)
+    due_date: date
+    status: Literal["promised", "paid", "partial", "missed", "cancelled"] = "promised"
+    conversation_id: Id | None = None
+    paid_amount: float = 0.0
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class HealthScore(Contract):
+    health_id: Id = Field(default_factory=lambda: new_id("health"))
+    customer_id: Id
+    score: int = Field(ge=0, le=100)
+    previous_score: int | None = Field(default=None, ge=0, le=100)
+    drivers: list[str] = Field(default_factory=list)
+    components: dict[str, float] = Field(default_factory=dict)
+    computed_at: datetime = Field(default_factory=utcnow)
+
+    @property
+    def change(self) -> int | None:
+        return None if self.previous_score is None else self.score - self.previous_score
+
+
+class TimelineEvent(Contract):
+    timeline_id: Id = Field(default_factory=lambda: new_id("timeline"))
+    customer_id: Id
+    at: datetime
+    kind: NonEmpty  # "invoice", "receipt", "message", "promise", "dispute", ...
+    title: NonEmpty
+    ref: str | None = None  # voucher number, case id, ...
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------
+# Orchestrator state
+# --------------------------------------------------------------------------
+
+
+class CustomerAssistState(Contract):
+    customer_id: Id | None = None
+    conversation_id: Id | None = None
+    channel: Channel
+    message: str
+
+    customer_context: Customer360 | None = None
+    conversation_context: list[Message] = Field(default_factory=list)
+    relevant_vouchers: list[dict[str, Any]] = Field(default_factory=list)
+    active_cases: list[Case] = Field(default_factory=list)
+    active_approvals: list[Approval] = Field(default_factory=list)
+    active_events: list[Event] = Field(default_factory=list)
+
+    intents: list[Intent] = Field(default_factory=list)
+    entities: dict[str, Any] = Field(default_factory=dict)
+    urgency: Literal["low", "normal", "high"] = "normal"
+
+    execution_plan: ExecutionPlan | None = None
+    agent_results: list[AgentResult] = Field(default_factory=list)
+    pending_actions: list[ProposedAction] = Field(default_factory=list)
+    completed_actions: list[ProposedAction] = Field(default_factory=list)
+
+    final_response: str | None = None
+
+
+# System boundaries — named so tests and docs cannot drift apart.
+BOUNDARIES = (
+    "input",
+    "customer_360",
+    "orchestrator",
+    "agents",
+    "tools",
+    "business_services",
+    "events",
+    "persistence",
+    "llm_gateway",
+    "evaluation",
+    "observability",
+)
