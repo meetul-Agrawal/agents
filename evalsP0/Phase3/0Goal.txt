@@ -1,0 +1,2 @@
+goal
+ need to test and eval phase 3 evals with real NVIDIA NIM and measure the performance got it and make a detai report and save it as "phase3NimEval.md" got it NVIDIA NIM RPM is 40 so keep that in mind and i want you to test on all 48 cases got it 
