@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: customer-assist
-Version: 0.1.0
-Summary: Customer Assist — agentic orchestration over Tally/MongoDB
-Requires-Python: >=3.11
-Requires-Dist: pydantic>=2.9
-Requires-Dist: pymongo>=4.10
-Requires-Dist: python-dotenv>=1.0
