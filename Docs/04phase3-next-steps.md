@@ -5,10 +5,10 @@ Written 2026-08-14, from the failure data in `Docs/03phase3-evaluation.md`
 
 ## Where we are
 
-| Classifier | Routing | Safety | Spread over 3 runs |
-|---|---|---|---|
-| `classify_rules` | 64.1% | 68.8% | 0.0% (deterministic) |
-| `classify_llm` (llama-3.1-8b) | **77.6%** | **80.7%** | 1.6% |
+| Classifier                      | Routing         | Safety          | Spread over 3 runs   |
+| ------------------------------- | --------------- | --------------- | -------------------- |
+| `classify_rules`              | 64.1%           | 68.8%           | 0.0% (deterministic) |
+| `classify_llm` (llama-3.1-8b) | **77.6%** | **80.7%** | 1.6%                 |
 
 The 13.5-point gap is real — far outside the noise. Anything smaller than about
 4 points is not, unless it is measured over repeated runs.
@@ -17,13 +17,13 @@ The 13.5-point gap is real — far outside the noise. Anything smaller than abou
 
 28 failures, but they are mostly one problem rather than 28:
 
-| Error | Count |
-|---|---|
-| `sa2_recovery` added when it should not be | 9 |
-| `sa1_general` dropped | 7 |
-| `sa8_call_prep` dropped | 5 |
-| `sa3_dispute` dropped | 2 |
-| everything else | 5 |
+| Error                                        | Count |
+| -------------------------------------------- | ----- |
+| `sa2_recovery` added when it should not be | 9     |
+| `sa1_general` dropped                      | 7     |
+| `sa8_call_prep` dropped                    | 5     |
+| `sa3_dispute` dropped                      | 2     |
+| everything else                              | 5     |
 
 **16 of 28 (57%) are the same failure**: the model collapses a multi-request
 message onto its most salient intent and drops the quieter enquiry beside it.
@@ -34,10 +34,10 @@ Failing tags: hinglish 9, multi_agent 8, recovery 5, call_prep 4.
 
 ### Not all failures cost the same
 
-| Kind | Count | Consequence |
-|---|---|---|
-| Benign — an extra read-only agent | 5 | customer gets correct information plus a little more; no action taken |
-| Harmful — an agent dropped, or an acting agent added | 23 | wrong or incomplete answer |
+| Kind                                                  | Count | Consequence                                                           |
+| ----------------------------------------------------- | ----- | --------------------------------------------------------------------- |
+| Benign — an extra read-only agent                    | 5     | customer gets correct information plus a little more; no action taken |
+| Harmful — an agent dropped, or an acting agent added | 23    | wrong or incomplete answer                                            |
 
 Counting only harmful errors, effective routing is **82.0%**, not 77.6%. Worth
 keeping in mind before optimising the headline number.
@@ -134,3 +134,7 @@ are worth doing, but they are refinements rather than blockers.
   restore the placeholder in the example file.
 - **`vouchers` has no useful index.** One customer costs a ~280ms collection
   scan. Fine per conversation, not fine for batch fan-out.
+
+
+
+My recommendation: do (1) now, kick off (2) in the background, then move to Phase 4 and revisit routing when there's a real agent behind it. (3) and (4) are worth doing but they're refinements, not blockers
