@@ -160,26 +160,23 @@ This replaced a closed list of unit nouns, which is why `15 bundle`,
 
 ### Rules vs LLM, measured
 
-128 cases, same graders, `uv run scripts/eval_report.py` →
-`Docs/03phase3-evaluation.md`:
+128 cases, 3 samples per configuration, `uv run scripts/eval_report.py --repeat 3`
+→ `Docs/03phase3-evaluation.md`:
 
-| Classifier | Routing | Safety | Time |
+| Classifier | Routing | Safety | Spread over 3 runs |
 |---|---|---|---|
-| `classify_rules` | 64.1% | 68.8% | 32s |
-| `classify_llm` (llama-3.1-8b) | **81.2%** | **85.9%** | 235s |
+| `classify_rules` | 64.1% | 68.8% | 0.0% (deterministic) |
+| `classify_llm` (llama-3.1-8b) | **77.6%** | **80.7%** | 1.6% |
 
-The rules scored 100% on the 48 cases they were written against and 64% once 80
-unseen cases were added — they had memorised their own test set. They are now
-the offline fallback only. The model wins where it matters: Hinglish 24/32 vs
-7/32, disputes 12/14 vs 6/14, recovery 11/15 vs 6/15.
+The 13.5-point gap is far outside the noise, so it is real. The rules scored
+100% on the 48 cases they were written against and 64% once 80 unseen cases were
+added — they had memorised their own test set, and are now the offline fallback
+only.
 
-Of the 24 remaining failures, 18 are genuine agent-selection errors, 5 are the
-single `intent` label collapsing a multi-request message, and 1 is an entity.
-
-**Measuring a "no model" baseline:** pass the classifier explicitly. `None`
-means *the default*, and the default is the model — twice that turned the rules
-row into a second LLM row, scoring a plausible-looking 78-81%. The tell was the
-clock, not the score.
+**Always sample more than once.** This model varies by up to ~4 points between
+identical runs at `temperature=0`, which is larger than most changes worth
+making. Single-run comparisons below that threshold mean nothing; the
+deterministic rules row is the control that proves the harness itself is stable.
 
 ## Known data findings
 

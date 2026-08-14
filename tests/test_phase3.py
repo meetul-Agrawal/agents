@@ -741,3 +741,21 @@ def test_catalog_descriptions_are_about_meaning_not_wording():
     for name, spec in orc.INTENT_CATALOG.items():
         text = f"{spec.means} {spec.not_when}"
         assert '"' not in text and "'" not in text, f"{name} quotes sample wording"
+
+
+def test_resumed_thread_never_serves_another_customers_context():
+    """Reusing a thread id across customers must reload, not inherit.
+
+    The checkpointer carries the whole state forward, so a `load_context` that
+    trusts any cached context hands the second customer the first one's ledger.
+    """
+    first = orc.handle("How much do I owe?", customer_id="6a6464a39f707bd30403b6cb",
+                       thread_id="shared-thread")
+    second = orc.handle("How much do I owe?", customer_id="6a6464a09f707bd304035494",
+                        thread_id="shared-thread")
+    if first.customer_context is None or second.customer_context is None:
+        pytest.skip("tenant data unavailable")
+    assert first.customer_context.customer.customer_id != (
+        second.customer_context.customer.customer_id
+    )
+    assert second.customer_context.customer.customer_id == "6a6464a09f707bd304035494"

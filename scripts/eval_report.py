@@ -39,7 +39,7 @@ GRADERS = [
 SAFETY_GRADERS = [E.agent_set(), E.exact_match("requires_human", "executed_without_approval")]
 
 
-def _summarize(case: E.EvalCase, classifier) -> dict:
+def _summarize(case: E.EvalCase, classifier, run: int = 0) -> dict:
     from ca.orchestrator import handle, summarize
 
     state = handle(
@@ -48,6 +48,9 @@ def _summarize(case: E.EvalCase, classifier) -> dict:
         case_context=case.context,
         message_id=case.case_id,
         classifier=classifier,
+        # A repeat must not resume the previous repeat's thread, or it inherits
+        # its state and stops being an independent sample.
+        thread_id=f"{case.case_id}-run{run}",
     )
     result = summarize(state)
     entities = result.pop("entities", {})
@@ -104,12 +107,14 @@ CONFIGS: dict[str, tuple[str, object]] = {
 DEFAULT_CONFIGS = ["rules", "llm-8b"]
 
 
-def run_config(name: str, classifier, cases: list[E.EvalCase]) -> tuple[E.Report, E.Report, float]:
+def run_config(
+    name: str, classifier, cases: list[E.EvalCase], run: int = 0
+) -> tuple[E.Report, E.Report, float]:
     started = time.time()
     done = [0]
 
     def run_one(case: E.EvalCase) -> dict:
-        result = _summarize(case, classifier)
+        result = _summarize(case, classifier, run)
         done[0] += 1
         if done[0] % 10 == 0:
             elapsed = time.time() - started
@@ -151,7 +156,9 @@ def tag_breakdown(report: E.Report, cases: list[E.EvalCase]) -> dict[str, tuple[
 
 def main(argv: list[str]) -> int:
     out = Path(argv[argv.index("--out") + 1]) if "--out" in argv else DEFAULT_OUT
-    names = [a for a in argv[1:] if not a.startswith("--") and a not in {str(out)}]
+    repeat = int(argv[argv.index("--repeat") + 1]) if "--repeat" in argv else 1
+    skip = {str(out), str(repeat)}
+    names = [a for a in argv[1:] if not a.startswith("--") and a not in skip]
     names = names or DEFAULT_CONFIGS
     unknown = set(names) - set(CONFIGS)
     if unknown:
@@ -162,6 +169,7 @@ def main(argv: list[str]) -> int:
     print(f"{len(cases)} cases, {len(names)} configs\n")
 
     results: dict[str, tuple[E.Report, E.Report, float]] = {}
+    spreads: dict[str, tuple[list[float], list[float]]] = {}
     for name in names:
         description, classifier = CONFIGS[name]
         if name != "rules":
@@ -170,18 +178,42 @@ def main(argv: list[str]) -> int:
             if not llm.available():
                 print(f"skipping {name}: no LLM provider configured")
                 continue
-        print(f"running {name} ({description}) ...", flush=True)
-        results[name] = run_config(name, classifier, cases)
-        full, safety, seconds = results[name]
-        print(f"  routing {full.pass_rate:.1%}   safety {safety.pass_rate:.1%}   {seconds:.0f}s")
+        print(f"running {name} ({description}) x{repeat} ...", flush=True)
+        runs = []
+        for attempt in range(repeat):
+            if attempt:
+                _clear_model_cache()
+            runs.append(run_config(name, classifier, cases, attempt))
+            full, safety, seconds = runs[-1]
+            print(f"  run {attempt + 1}: routing {full.pass_rate:.1%}  "
+                  f"safety {safety.pass_rate:.1%}  {seconds:.0f}s", flush=True)
+        results[name] = runs[0]
+        spreads[name] = ([r[0].pass_rate for r in runs], [r[1].pass_rate for r in runs])
+        if repeat > 1:
+            routing, safety_rates = spreads[name]
+            print(f"  routing mean {sum(routing) / len(routing):.1%} "
+                  f"(min {min(routing):.1%}, max {max(routing):.1%}, "
+                  f"spread {max(routing) - min(routing):.1%})")
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(render(results, cases))
+    out.write_text(render(results, cases, spreads))
     print(f"\nwritten: {out}")
     return 0
 
 
-def render(results: dict[str, tuple[E.Report, E.Report, float]], cases: list[E.EvalCase]) -> str:
+def _clear_model_cache() -> None:
+    """Each repeat must be an independent sample: the memo would otherwise
+    replay the first run's answers and report zero variance."""
+    from ca.orchestrator import _understand
+
+    _understand.cache_clear()
+
+
+def render(
+    results: dict[str, tuple[E.Report, E.Report, float]],
+    cases: list[E.EvalCase],
+    spreads: dict[str, tuple[list[float], list[float]]] | None = None,
+) -> str:
     from datetime import datetime, timezone
 
     by_id = {c.case_id: c for c in cases}
@@ -204,15 +236,21 @@ def render(results: dict[str, tuple[E.Report, E.Report, float]], cases: list[E.E
         "",
         "## Results",
         "",
-        "| Configuration | What it is | Routing | Safety | Time |",
-        "|---|---|---|---|---|",
+        "| Configuration | What it is | Routing | Safety | Time | Runs |",
+        "|---|---|---|---|---|---|",
     ]
+    spreads = spreads or {}
     for name, (full, safety, seconds) in results.items():
         description = CONFIGS[name][0]
+        routing_runs, safety_runs = spreads.get(name, ([full.pass_rate], [safety.pass_rate]))
+        routing = f"**{sum(routing_runs) / len(routing_runs):.1%}**"
+        safety_text = f"**{sum(safety_runs) / len(safety_runs):.1%}**"
+        if len(routing_runs) > 1:
+            routing += f" ±{(max(routing_runs) - min(routing_runs)) / 2:.1%}"
+            safety_text += f" ±{(max(safety_runs) - min(safety_runs)) / 2:.1%}"
         lines.append(
-            f"| `{name}` | {description} | **{full.pass_rate:.1%}** "
-            f"({full.passed}/{full.total}) | **{safety.pass_rate:.1%}** "
-            f"({safety.passed}/{safety.total}) | {seconds:.0f}s |"
+            f"| `{name}` | {description} | {routing} | {safety_text} | "
+            f"{seconds:.0f}s | {len(routing_runs)} |"
         )
 
     lines += ["", "## By category", "", "Pass rate on the full routing score, per tag.", ""]

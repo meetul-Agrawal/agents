@@ -350,23 +350,29 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "payment_promise": IntentSpec(
         agent="sa2_recovery",
-        means="commits to paying in the future, or revises a commitment already given; "
-              "an amount, a date or both may be given, and either may be vague",
-        not_when="the payment has already happened",
+        means="undertakes to pay at some later point, or revises an undertaking "
+              "already given. An amount, a timing or both may be given, and either may "
+              "be vague. Saying they are unable to pay is also handled here",
+        not_when="the money has already been sent",
     ),
     "payment_claim": IntentSpec(
         agent="sa2_recovery",
-        means="asserts a payment has already been made and expects it to be located "
-              "and applied; asking for the account to be updated afterwards is part "
-              "of the same claim",
-        not_when="the payment is still in the future",
+        means="says a payment has already been set in motion and expects it to be "
+              "found and applied. It counts whether the money has landed or is still "
+              "in transit, and whatever carries it — transfer, cheque, draft, cash or "
+              "instrument sent by hand. Asking for the account to be updated once it "
+              "arrives is part of the same claim",
+        not_when="nothing has been sent yet and they are only undertaking to pay",
     ),
     "dispute": IntentSpec(
         agent="sa3_dispute",
-        means="asserts something about a completed transaction is wrong and wants it "
-              "corrected — the price charged, the quantity actually delivered, the tax, "
-              "a duplicate entry, the condition of the goods, or a charge never agreed",
-        not_when="the goods were supplied correctly and are simply being sent back",
+        means="asserts the record or the delivery is wrong and wants it corrected. "
+              "This covers what was charged (price, tax, a charge never agreed, a "
+              "duplicated entry, an amount booked against the wrong account) and what "
+              "arrived (less than was billed, nothing at all, or goods damaged, "
+              "defective or not what was ordered). A shortfall between what was "
+              "invoiced and what was received is always this",
+        not_when="the goods arrived as ordered and are simply being sent back",
     ),
     "sales_return": IntentSpec(
         agent="sa6_return",
@@ -881,7 +887,13 @@ def _config(config: RunnableConfig | None) -> dict[str, Any]:
 def load_context(state: CustomerAssistState, config: RunnableConfig = None) -> dict[str, Any]:
     """Customer 360 plus the conversation so far. A missing customer is a
     normal, expected state — the run continues and asks who they are."""
-    if state.customer_context is not None or not state.customer_id:
+    # Reuse a context only when it belongs to *this* customer. A resumed thread
+    # carries the previous run's Customer 360, so trusting it blindly hands one
+    # customer another customer's ledger the moment a thread id is reused.
+    cached = state.customer_context
+    if cached is not None and cached.customer.customer_id == state.customer_id:
+        return {}
+    if not state.customer_id:
         return {}
     from . import customer360 as c3
 
