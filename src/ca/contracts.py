@@ -364,6 +364,57 @@ class Intent(Contract):
 
 
 # --------------------------------------------------------------------------
+# What the model returns — one object per inbound message
+# --------------------------------------------------------------------------
+
+
+class ModelOutput(BaseModel):
+    """Base for anything an LLM fills in.
+
+    Unlike `Contract`, unknown fields are ignored rather than rejected: a model
+    that adds a stray key should not fail the whole parse. Every field here is
+    a *claim*, not a fact — `orchestrator.verify()` checks each one against the
+    message before anything downstream sees it.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class ExtractedValue(ModelOutput):
+    """A number the model found. `text` must be a verbatim span of the message —
+    that is what makes the claim checkable. `value` is the model's arithmetic and
+    is always recomputed by us before use."""
+
+    text: str = ""
+    value: float | None = None
+    unit: str | None = None
+
+
+class Request(ModelOutput):
+    """One thing the customer is asking for."""
+
+    intent: str = ""
+    clause: str = ""
+    confidence: float = 0.5
+    amount: ExtractedValue | None = None
+    quantity: ExtractedValue | None = None
+    voucher_ref: str | None = None
+    due_date_text: str | None = None
+    reason: str = ""
+
+
+class Understanding(ModelOutput):
+    """The single structured reading of one inbound message. Intents, entities,
+    language and the cross-customer signal all come from here, so one call
+    answers everything the orchestrator needs to plan."""
+
+    language: str = "en"
+    is_greeting_only: bool = False
+    refers_to_other_party: str | None = None
+    requests: list[Request] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------
 # Operational records (all persisted in the app DB, never the tenant DB)
 # --------------------------------------------------------------------------
 

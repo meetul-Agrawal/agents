@@ -6,8 +6,9 @@
     uv run scripts/run_evals.py all --accept       # store new baselines
 
 Suites:
-  routing      — Phase 3 will replace the oracle with the real orchestrator.
-                 For now it proves the harness, dataset format and gate work.
+  routing      — the real orchestrator over mock agents, deterministic
+                 classifier. Regression gate for planning and the approval gate.
+  routing_llm  — same dataset through the LLM classifier (costs tokens).
   customer360  — real: runs the Phase 1 read services against MongoDB and
                  grades them against golden values produced by an independent
                  implementation (scripts/gen_golden.js).
@@ -30,8 +31,16 @@ DATASETS = Path("evals/datasets")
 
 
 def _routing_run(case: E.EvalCase, classifier=None) -> dict:
-    """The real orchestrator over mock agents: intent, plan and safety only."""
-    from ca.orchestrator import handle, summarize
+    """The real orchestrator over mock agents: intent, plan and safety only.
+
+    Pinned to the deterministic classifier: this suite is the regression gate
+    for the orchestration machinery, so it must not inherit the model's
+    run-to-run drift — and `classifier=None` would mean "the default", which is
+    now the model. `scripts/eval_report.py` is where classifiers get compared.
+    """
+    from ca.orchestrator import classify_rules, handle, summarize
+
+    classifier = classifier or classify_rules
 
     state = handle(
         case.input,

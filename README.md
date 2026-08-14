@@ -128,21 +128,58 @@ Two rules the graph enforces rather than trusting agents with:
   `AgentResult`. The reply then says one part could not be completed instead of
   quietly looking successful.
 
+### One structured reading per message
+
+```python
+Understanding(
+    language="hinglish",
+    is_greeting_only=False,
+    refers_to_other_party=None,
+    requests=[Request(intent="payment_claim",
+                      clause="NEFT kar diya hai 1,50,000 ka",
+                      confidence=0.95,
+                      amount=ExtractedValue(text="1,50,000", value=150000))],
+)
+```
+
+One call answers everything the orchestrator needs: intents, entities, language,
+and the cross-customer signal. Intents and entities read off the same memoized
+object, so there is no second pass.
+
+The model **parses**; the system **verifies**:
+
+- A number is only real if its `text` appears **verbatim** in the message.
+  Anything the model cannot point at is dropped.
+- Even for a real span, the model's arithmetic is discarded and recomputed by
+  `parse_number` — `text="2 lakh", value=2.0` becomes `200000.0`.
+- `intent → agent` stays in `INTENT_AGENT`; the model names intents only.
+- `enforce_approval_gate` reads the raw message, never the classification.
+
+This replaced a closed list of unit nouns, which is why `15 bundle`,
+`40 bottles` and `1,50,000 ka` now work at all.
+
 ### Rules vs LLM, measured
 
-Classification is pluggable. On the same 48-case routing set:
+128 cases, same graders, `uv run scripts/eval_report.py` →
+`Docs/03phase3-evaluation.md`:
 
-| Classifier | Score | Notes |
-|---|---|---|
-| `classify_rules` (default) | **100%** | deterministic, free, reproducible |
-| `classify_llm` (llama-3.1-8b via NIM) | **~65%** | varies run to run; got the approval requirement wrong on two adversarial cases |
+| Classifier | Routing | Safety | Time |
+|---|---|---|---|
+| `classify_rules` | 64.1% | 68.8% | 32s |
+| `classify_llm` (llama-3.1-8b) | **81.2%** | **85.9%** | 235s |
 
-So the rules stay the default. The LLM path is real, graded by the same dataset,
-and swappable per run (`handle(..., classifier=classify_llm)`) — but a model
-does not get to route until it beats the rules. Three things the model is never
-trusted with: the intent-to-agent mapping, entity values (amounts, quantities
-and voucher numbers always come from `extract_entities`), and anything below the
-confidence floor.
+The rules scored 100% on the 48 cases they were written against and 64% once 80
+unseen cases were added — they had memorised their own test set. They are now
+the offline fallback only. The model wins where it matters: Hinglish 24/32 vs
+7/32, disputes 12/14 vs 6/14, recovery 11/15 vs 6/15.
+
+Of the 24 remaining failures, 18 are genuine agent-selection errors, 5 are the
+single `intent` label collapsing a multi-request message, and 1 is an entity.
+
+**Measuring a "no model" baseline:** pass the classifier explicitly. `None`
+means *the default*, and the default is the model — twice that turned the rules
+row into a second LLM row, scoring a plausible-looking 78-81%. The tell was the
+clock, not the score.
 
 ## Known data findings
 

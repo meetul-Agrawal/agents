@@ -1,9 +1,9 @@
 {
   "suite": "routing",
-  "started_at": "2026-08-14T08:19:21.697341+00:00",
-  "total": 48,
-  "passed": 48,
-  "pass_rate": 1.0,
+  "started_at": "2026-08-14T11:50:10.582568+00:00",
+  "total": 128,
+  "passed": 82,
+  "pass_rate": 0.6406,
   "cases": {
     "RT-A-001": {
       "passed": true,
@@ -471,6 +471,2486 @@
       ]
     },
     "RT-B-006": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-001": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-002": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-003": {
+      "passed": false,
+      "score": 0.875,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'outstanding_enquiry', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-004": {
+      "passed": false,
+      "score": 0.875,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'document_request', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "RT-X-005": {
+      "passed": false,
+      "score": 0.875,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'document_request', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-006": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-007": {
+      "passed": false,
+      "score": 0.875,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'payment_history_enquiry', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-008": {
+      "passed": false,
+      "score": 0.875,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'sales_history_enquiry', got 'outstanding_enquiry'"
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-009": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-010": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-011": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'payment_promise', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-012": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-013": {
+      "passed": false,
+      "score": 0.375,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'payment_claim', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 0.0,
+          "passed": false,
+          "detail": "amounts: expected [150000.0], got None"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-014": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-015": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'payment_claim', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-016": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-017": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'payment_promise', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-018": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'payment_promise', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-019": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-020": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "RT-X-021": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'payment_promise', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-022": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'payment_claim', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-023": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'dispute', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-024": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'dispute', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "RT-X-025": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'dispute', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-026": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-027": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'dispute', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-028": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'dispute', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-029": {
+      "passed": false,
+      "score": 0.375,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'dispute', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 0.0,
+          "passed": false,
+          "detail": "quantities: expected [15], got None"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-030": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'dispute', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-031": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-032": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'dispute', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-033": {
+      "passed": false,
+      "score": 0.5,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.0,
+          "passed": false,
+          "detail": "intent: expected 'settlement_request', got 'unknown'; requires_human: expected True, got False"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa4_approval'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-034": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-035": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-036": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "RT-X-037": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-038": {
+      "passed": false,
+      "score": 0.9167,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.6667,
+          "passed": false,
+          "detail": "missing=['sa5_order'] extra=[]"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-039": {
+      "passed": false,
+      "score": 0.5,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.0,
+          "passed": false,
+          "detail": "intent: expected 'settlement_request', got 'cross_customer_request'; requires_human: expected True, got False"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa4_approval'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-040": {
+      "passed": false,
+      "score": 0.5,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.0,
+          "passed": false,
+          "detail": "intent: expected 'settlement_request', got 'outstanding_enquiry'; requires_human: expected True, got False"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa4_approval'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-041": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-042": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'order_capture', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa5_order'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-043": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-044": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa5_order'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-045": {
+      "passed": false,
+      "score": 0.375,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'order_capture', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa5_order'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 0.0,
+          "passed": false,
+          "detail": "quantities: expected [10], got None"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-046": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa5_order'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-047": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-048": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa5_order'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-049": {
+      "passed": false,
+      "score": 0.375,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'sales_return', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa6_return'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 0.0,
+          "passed": false,
+          "detail": "quantities: expected [40], got None"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-050": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 0.0,
+          "passed": false,
+          "detail": "quantities: expected [50], got None"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-051": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-052": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'sales_return', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa6_return'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-053": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "RT-X-054": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-055": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-056": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa6_return'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-057": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-058": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'health_enquiry', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa7_health'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-059": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "intent: expected 'call_prep', got 'unknown'"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa8_call_prep'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-060": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-061": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa8_call_prep'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-062": {
+      "passed": false,
+      "score": 0.75,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa8_call_prep'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-063": {
+      "passed": false,
+      "score": 0.7917,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "order: expected ['sa1_general', 'sa5_order'], got ['sa1_general']"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.6667,
+          "passed": false,
+          "detail": "missing=['sa5_order'] extra=[]"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-064": {
+      "passed": false,
+      "score": 0.7917,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "order: expected ['sa3_dispute', 'sa4_approval'], got ['sa4_approval']"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.6667,
+          "passed": false,
+          "detail": "missing=['sa3_dispute'] extra=[]"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-065": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-066": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-067": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "order: expected ['sa2_recovery', 'sa3_dispute'], got ['sa1_general']"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa2_recovery', 'sa3_dispute'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-068": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-069": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-070": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-071": {
+      "passed": false,
+      "score": 0.625,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "order: expected ['sa3_dispute', 'sa6_return', 'sa5_order'], got ['sa1_general']"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa3_dispute', 'sa5_order', 'sa6_return'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-072": {
+      "passed": false,
+      "score": 0.7917,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "order: expected ['sa1_general', 'sa2_recovery'], got ['sa1_general']"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.6667,
+          "passed": false,
+          "detail": "missing=['sa2_recovery'] extra=[]"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-073": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-074": {
+      "passed": false,
+      "score": 0.7917,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.5,
+          "passed": false,
+          "detail": "order: expected ['sa1_general', 'sa5_order'], got ['sa5_order']"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.6667,
+          "passed": false,
+          "detail": "missing=['sa1_general'] extra=[]"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-075": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-076": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-077": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-078": {
+      "passed": false,
+      "score": 0.5833,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 0.3333,
+          "passed": false,
+          "detail": "intent: expected 'settlement_request', got 'outstanding_enquiry'; requires_human: expected True, got False"
+        },
+        {
+          "name": "agent_set",
+          "score": 0.0,
+          "passed": false,
+          "detail": "missing=['sa4_approval'] extra=['sa1_general']"
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-079": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-X-080": {
       "passed": true,
       "score": 1.0,
       "error": null,
