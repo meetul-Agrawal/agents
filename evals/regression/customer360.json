@@ -1,0 +1,123 @@
+{
+  "suite": "customer360",
+  "started_at": "2026-08-14T07:34:40.198732+00:00",
+  "total": 6,
+  "passed": 6,
+  "pass_rate": 1.0,
+  "cases": {
+    "C360-001": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "C360-002": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "C360-003": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "C360-004": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "C360-005": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    },
+    "C360-006": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        }
+      ]
+    }
+  }
+}

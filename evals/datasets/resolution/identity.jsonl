@@ -1,0 +1,12 @@
+{"case_id": "RES-001", "input": "Aadinath Traders, Siyaganj", "expected": {"customer_id": "6a6464a09f707bd304035494"}, "tags": ["exact_name"]}
+{"case_id": "RES-002", "input": "6a6464a09f707bd304035494", "expected": {"customer_id": "6a6464a09f707bd304035494"}, "tags": ["ledger_id"]}
+{"case_id": "RES-003", "input": "LEDB767280E", "expected": {"customer_id": "6a6464a09f707bd30403549f"}, "tags": ["ledger_code"]}
+{"case_id": "RES-004", "input": "8109410408", "expected": {"customer_id": "6a6464a09f707bd30403549f"}, "tags": ["mobile", "unique"]}
+{"case_id": "RES-005", "input": "+91 8109410408", "expected": {"customer_id": "6a6464a09f707bd30403549f"}, "tags": ["mobile", "formatted"]}
+{"case_id": "RES-006", "input": "23ABMPY6797R1Z6", "expected": {"customer_id": "6a6464a09f707bd3040354a6"}, "tags": ["gstin"]}
+{"case_id": "RES-007", "input": "Aadiee Superplast Industries Pvt. Ltd., Indore", "expected": {"customer_id": "6a6464a09f707bd304035491"}, "tags": ["exact_name", "punctuation"]}
+{"case_id": "RES-008", "input": "Nonexistent Trading Company Pvt Ltd", "expected": {"error": "not_found"}, "tags": ["negative"]}
+{"case_id": "RES-009", "input": "", "expected": {"error": "not_found"}, "tags": ["negative", "empty"]}
+{"case_id": "RES-010", "input": "Traders", "expected": {"error": "ambiguous"}, "tags": ["ambiguous"]}
+{"case_id": "RES-011", "input": "9424885200", "expected": {"error": "ambiguous"}, "tags": ["ambiguous", "shared_mobile"]}
+{"case_id": "RES-012", "input": "aadinath traders, siyaganj", "expected": {"customer_id": "6a6464a09f707bd304035494"}, "tags": ["case_insensitive"]}

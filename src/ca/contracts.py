@@ -147,6 +147,76 @@ class Customer(Contract):
     opening_balance: float = 0.0
 
 
+class OpenBill(Contract):
+    """An in-book sales invoice with money still outstanding against it."""
+
+    voucher_number: NonEmpty
+    invoice_date: date
+    invoice_amount: float
+    allocated: float
+    outstanding: float
+    age_days: int
+    bucket: Literal["0-30", "31-60", "61-90", "90+"]
+
+
+class Outstanding(Contract):
+    """Bill-level receivables. Every field is derived from vouchers, never
+    from an LLM.
+
+    `outstanding` counts only invoices present in this book. Receipts that
+    settle bills predating the book cannot be tied to an invoice — they are
+    reported separately as `pre_book_settlements` rather than being netted off,
+    which would understate the balance.
+    """
+
+    customer_id: Id
+    ledger_name: NonEmpty
+    as_of: date
+    outstanding: float
+    open_bill_count: int
+    invoiced_total: float
+    receipted_total: float
+    allocated_total: float
+    pre_book_settlements: float
+    on_account: float
+    advance: float
+    opening_balance: float
+    ageing: dict[str, float] = Field(default_factory=dict)
+    open_bills: list[OpenBill] = Field(default_factory=list)
+
+
+class LedgerLine(Contract):
+    """One posting to the customer's ledger, oldest first."""
+
+    date: date
+    voucher_number: NonEmpty
+    category: Literal["Sales", "Receipt", "Other"]
+    debit: float = 0.0  # increases what the customer owes
+    credit: float = 0.0  # reduces it
+    balance: float = 0.0  # running amount owed after this line
+    against_bills: list[str] = Field(default_factory=list)
+
+
+class PaymentBehaviour(Contract):
+    receipt_count: int = 0
+    total_received: float = 0.0
+    first_receipt: date | None = None
+    last_receipt: date | None = None
+    avg_days_to_settle: float | None = None
+    settled_bill_count: int = 0
+
+
+class DataCapability(Contract):
+    """What this tenant's book can and cannot answer. Guards every agent from
+    promising data that does not exist."""
+
+    credit_notes: bool = False
+    orders: bool = False
+    due_dates: bool = False
+    credit_limits: bool = False
+    note: str = ""
+
+
 class Customer360(Contract):
     """The logical state the orchestrator reasons over. Sections are filled in
     Phase 1; Phase 0 only freezes the shape."""

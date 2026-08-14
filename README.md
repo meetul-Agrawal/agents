@@ -5,29 +5,52 @@ sf_tenant_6a33b5b2091da2fb4a7c3de4
 Agentic orchestration over Tally data in MongoDB. Vision: `Docs/01vision.md`.
 Roadmap and evaluation gates: `Docs/02phasesWithEval.md`.
 
-Status: **Phase 0 complete** — contracts frozen, evaluation foundation running.
-No agent is implemented yet.
+Status: **Phase 1 complete** — contracts frozen, evaluation foundation running,
+Customer 360 answering from real data. No agent is implemented yet.
 
 ## Layout
 
 ```
-src/ca/contracts.py   frozen boundary types (Customer, Message, AgentResult, Event, ...)
-src/ca/registry.py    agent + tool declarations, permissions, action modes
-src/ca/config.py      settings, read-only tenant DB guard, app DB handle
-src/ca/evals.py       dataset loader, graders, runner, report, regression
-evals/datasets/       .jsonl cases, one directory per suite
-evals/regression/     accepted baselines
-scripts/run_evals.py  run a suite, diff against baseline
+src/ca/contracts.py     frozen boundary types (Customer, Outstanding, AgentResult, Event, ...)
+src/ca/registry.py      agent + tool declarations, permissions, action modes
+src/ca/config.py        settings, read-only tenant DB guard, app DB handle
+src/ca/customer360.py   resolution, outstanding, ledger, timeline, Customer 360
+src/ca/data_quality.py  the book's data-quality checks
+src/ca/evals.py         dataset loader, graders, runner, report, regression
+evals/datasets/         .jsonl cases, one directory per suite
+evals/regression/       accepted baselines
+scripts/run_evals.py    run a suite, diff against baseline
+scripts/gen_golden.js   independent mongosh implementation that produces the golden values
 ```
 
 ## Run
 
 ```bash
 uv sync
-uv run pytest                              # 25 tests: unit, negative, integration
-uv run scripts/run_evals.py routing        # eval report + regression check
-uv run scripts/run_evals.py routing --accept   # store the new baseline
+uv run pytest                                  # 63 tests: unit, negative, live integration
+uv run scripts/run_evals.py all                # routing + resolution + customer360
+uv run scripts/run_evals.py all --accept       # store new baselines
+uv run python -m ca.data_quality               # data-quality report (exit 1 on any P0)
 ```
+
+## How the money is computed
+
+Outstanding is **bill-level**, not a net balance, because a net balance is wrong
+in this book: many receipts settle invoices that predate it, which makes a
+customer look overpaid.
+
+```
+outstanding = Σ over in-book sales invoices of (invoice amount − Agst Ref allocations)
+```
+
+Receipts that point at an invoice this book does not contain are reported as
+`pre_book_settlements` and never netted off. `on_account` and `advance` receipts
+are reported separately too. Ageing is measured from the **invoice date** — this
+book has no due dates, so nothing is described as "overdue".
+
+The golden values in `evals/datasets/customer360/` are produced by
+`scripts/gen_golden.js`, a separately written mongosh implementation of the same
+rules. The suite passes only when two independent implementations agree.
 
 ## Data rules
 
@@ -49,11 +72,31 @@ uv run scripts/run_evals.py routing --accept   # store the new baseline
   `ledger_name` is the join key, and both live on `Customer`.
 - Invoice↔receipt linkage is `ledgerEntries[].billAllocations[]` where
   `billType == "Agst Ref"` and `name` is the invoice number.
-- `vouchers` has no index beyond `_id` and `companyId_voucherGuid`. Phase 1 needs
-  indexes before Customer 360 queries are usable.
+- On the party's ledger line, **sales post negative and receipts positive**, so
+  what the customer owes is the negation of the stored amount.
+- `vouchers` has no index beyond `_id` and `companyId_voucherGuid`, so one
+  customer costs a ~280ms collection scan. Fine per conversation; add
+  `{"ledgerEntries.ledgerName": 1}` before any batch fan-out.
+
+## Known data findings
+
+From `uv run python -m ca.data_quality` against this book:
+
+| Check | Count | Meaning |
+|---|---|---|
+| `duplicate_customer_name` | 2 | P0 — the voucher join key is ambiguous for these two |
+| `duplicate_customer_mobile` | 84 | a phone number alone cannot identify a customer |
+| `missing_voucher_number` / `invalid_voucher_date` / `voucher_without_entries` | 3 each | the same 3 non-posting stubs |
+| `duplicate_voucher_number` | 200+ | same number reused within a voucher type |
+| `receipt_against_unknown_invoice` | 24,215 of 108,021 | 77.6% of allocations resolve in-book; the rest predate it |
+| `unbalanced_voucher` | 0 | every voucher is double-entry balanced |
+| `over_allocated_bill` | 0 | no invoice is paid beyond its value |
+
+`resolve_customer` raises `AmbiguousCustomerError` rather than guessing whenever
+a query matches more than one customer.
 
 ## Next
 
-Phase 1 — data + Customer 360 foundation: read services over the collections
-above, ledger/outstanding calculation, and the data-quality tests in
-`Docs/02phasesWithEval.md`.
+Phase 2 — input + conversation layer: normalize email/chat/webhook into one
+`Message`, resolve threads, dedupe, and wire the conversation resolver onto the
+customer resolver built here.

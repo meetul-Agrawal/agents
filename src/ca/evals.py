@@ -99,6 +99,32 @@ def exact_match(*fields: str) -> Grader:
     return grade
 
 
+def numeric(*fields: str, tolerance: float = 0.01) -> Grader:
+    """Money comparison with a rounding tolerance. Nested dicts (ageing buckets)
+    are compared key by key."""
+
+    def close(a: Any, b: Any) -> bool:
+        if isinstance(a, dict) and isinstance(b, dict):
+            return set(a) == set(b) and all(close(a[k], b[k]) for k in a)
+        try:
+            return abs(float(a) - float(b)) <= tolerance
+        except (TypeError, ValueError):
+            return False
+
+    def grade(expected: dict[str, Any], actual: dict[str, Any]) -> Grade:
+        checked = [f for f in fields if f in expected]
+        if not checked:
+            return Grade("numeric", 1.0, True, "nothing asserted")
+        bad = [
+            f"{f}: expected {expected[f]!r}, got {actual.get(f)!r}"
+            for f in checked
+            if not close(expected[f], actual.get(f))
+        ]
+        return Grade("numeric", 1 - len(bad) / len(checked), not bad, "; ".join(bad))
+
+    return grade
+
+
 def agent_set(field_name: str = "agents") -> Grader:
     """Precision/recall over the selected agent set; F1 is the score."""
 
