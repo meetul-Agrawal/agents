@@ -1,8 +1,8 @@
 {
   "suite": "routing",
-  "started_at": "2026-08-14T07:42:41.813469+00:00",
-  "total": 16,
-  "passed": 16,
+  "started_at": "2026-08-14T08:19:21.697341+00:00",
+  "total": 48,
+  "passed": 48,
   "pass_rate": 1.0,
   "cases": {
     "RT-A-001": {
@@ -21,6 +21,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -40,6 +52,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -59,6 +83,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -78,6 +114,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -97,6 +145,359 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-A-006": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-A-007": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-A-008": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-A-009": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-A-010": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-B-001": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-B-002": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-B-003": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-B-004": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-B-005": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-B-006": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -116,6 +517,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -135,6 +548,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -154,6 +579,235 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-M-004": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-M-005": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-M-006": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-M-007": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-M-008": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-M-009": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-M-010": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -173,6 +827,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -189,6 +855,18 @@
         },
         {
           "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
           "score": 1.0,
           "passed": true,
           "detail": ""
@@ -211,6 +889,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -230,6 +920,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -249,6 +951,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -268,6 +982,18 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     },
@@ -284,6 +1010,18 @@
         },
         {
           "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
           "score": 1.0,
           "passed": true,
           "detail": ""
@@ -306,6 +1044,452 @@
           "score": 1.0,
           "passed": true,
           "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-009": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-010": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-011": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-012": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-013": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-014": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-015": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-016": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-017": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-018": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-019": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-020": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-021": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        }
+      ]
+    },
+    "RT-S-022": {
+      "passed": true,
+      "score": 1.0,
+      "error": null,
+      "grades": [
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "agent_set",
+          "score": 1.0,
+          "passed": true,
+          "detail": ""
+        },
+        {
+          "name": "numeric",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
+        },
+        {
+          "name": "exact_match",
+          "score": 1.0,
+          "passed": true,
+          "detail": "nothing asserted"
         }
       ]
     }

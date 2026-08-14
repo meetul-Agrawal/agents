@@ -5,9 +5,10 @@ sf_tenant_6a33b5b2091da2fb4a7c3de4
 Agentic orchestration over Tally data in MongoDB. Vision: `Docs/01vision.md`.
 Roadmap and evaluation gates: `Docs/02phasesWithEval.md`.
 
-Status: **Phase 2 complete** — contracts frozen, evaluation foundation running,
-Customer 360 answering from real data, and email/chat/webhook normalized onto
-one conversation model. No agent is implemented yet.
+Status: **Phase 3 complete** — contracts frozen, evaluation foundation running,
+Customer 360 answering from real data, email/chat/webhook normalized onto one
+conversation model, and the orchestrator routing over mock agents. The eight
+real agents (SA-1 … SA-8) are still mocks.
 
 ## Layout
 
@@ -17,6 +18,8 @@ src/ca/registry.py      agent + tool declarations, permissions, action modes
 src/ca/config.py        settings, read-only tenant DB guard, app DB handle
 src/ca/customer360.py   resolution, outstanding, ledger, timeline, Customer 360
 src/ca/inbox.py         email/chat/webhook parsing, threading, dedupe, ingestion
+src/ca/orchestrator.py  intent rules, planner, approval gate, LangGraph state machine
+src/ca/llm.py           LLM gateway: capability -> provider, structured output
 src/ca/data_quality.py  the book's data-quality checks
 src/ca/evals.py         dataset loader, graders, runner, report, regression
 evals/datasets/         .jsonl cases, one directory per suite
@@ -29,8 +32,9 @@ scripts/gen_golden.js   independent mongosh implementation that produces the gol
 
 ```bash
 uv sync
-uv run pytest                                  # 114 tests: unit, negative, live integration
+uv run pytest                                  # 175 tests: unit, negative, live integration
 uv run scripts/run_evals.py all                # routing + resolution + conversation + customer360
+uv run scripts/run_evals.py routing_llm        # same dataset, LLM classifier (costs tokens)
 uv run scripts/run_evals.py all --accept       # store new baselines
 uv run python -m ca.data_quality               # data-quality report (exit 1 on any P0)
 ```
@@ -101,6 +105,45 @@ The thread carries identity, not the sender line: a customer replying from a new
 address stays on their conversation, and an anonymous thread back-fills its
 customer as soon as one message identifies them.
 
+## Orchestration
+
+```
+START → load_context → classify_intent → create_plan → route
+      → execute → review → respond → update_state → END
+```
+
+```python
+state = orchestrator.handle("I want to return 20 pieces from URD/NE/327.",
+                            customer_id=cid)
+```
+
+Two rules the graph enforces rather than trusting agents with:
+
+- **A task marked `requires_human` is never executed.** It becomes a pending
+  action and the run reports `needs_approval`. `enforce_approval_gate` decides
+  this from the *message text*, not from the classifier, so a model that misreads
+  "write off my balance" as a payment promise still cannot route around it.
+- **A broken agent cannot break the run.** Raising, timing out, returning the
+  wrong type, or claiming to be a different agent all become a `failed`
+  `AgentResult`. The reply then says one part could not be completed instead of
+  quietly looking successful.
+
+### Rules vs LLM, measured
+
+Classification is pluggable. On the same 48-case routing set:
+
+| Classifier | Score | Notes |
+|---|---|---|
+| `classify_rules` (default) | **100%** | deterministic, free, reproducible |
+| `classify_llm` (llama-3.1-8b via NIM) | **~65%** | varies run to run; got the approval requirement wrong on two adversarial cases |
+
+So the rules stay the default. The LLM path is real, graded by the same dataset,
+and swappable per run (`handle(..., classifier=classify_llm)`) — but a model
+does not get to route until it beats the rules. Three things the model is never
+trusted with: the intent-to-agent mapping, entity values (amounts, quantities
+and voucher numbers always come from `extract_entities`), and anything below the
+confidence floor.
+
 ## Known data findings
 
 From `uv run python -m ca.data_quality` against this book:
@@ -120,7 +163,6 @@ a query matches more than one customer.
 
 ## Next
 
-Phase 3 — Customer Assist orchestrator: the LangGraph state machine
-(`load_context → classify_intent → create_plan → route → execute → review →
-respond → update_state`) over mock agents, graded by the routing suite that is
-already in place.
+Phase 4 — SA-1 General Agent: replace the first mock in
+`orchestrator.AGENT_RUNNERS` with a real read-only agent over the Phase 1 tools,
+graded for factuality and grounding.

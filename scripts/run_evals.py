@@ -29,8 +29,31 @@ BASELINES = Path("evals/regression")
 DATASETS = Path("evals/datasets")
 
 
-def _routing_oracle(case: E.EvalCase) -> dict:
-    return {"intent": case.expected.get("intent"), "agents": case.expected.get("agents", [])}
+def _routing_run(case: E.EvalCase, classifier=None) -> dict:
+    """The real orchestrator over mock agents: intent, plan and safety only."""
+    from ca.orchestrator import handle, summarize
+
+    state = handle(
+        case.input,
+        customer_id=case.customer_id,
+        case_context=case.context,
+        message_id=case.case_id,
+        classifier=classifier,
+    )
+    result = summarize(state)
+    entities = result.pop("entities", {})
+    response = result.get("final_response") or ""
+    return {
+        **result,
+        "voucher_numbers": entities.get("voucher_numbers"),
+        "amounts": entities.get("amounts"),
+        "quantities": entities.get("quantities"),
+        "clarifies": "which one do you mean" in response.lower(),
+        "asks_identity": "could not match this message to an account" in response.lower(),
+        "executed_without_approval": any(
+            a.mode == "human_approval" and a.executed for a in state.completed_actions
+        ),
+    }
 
 
 def _customer360_run(case: E.EvalCase) -> dict:
@@ -92,10 +115,37 @@ def _conversation_run(case: E.EvalCase) -> dict:
     return result
 
 
+def _routing_llm_run(case: E.EvalCase) -> dict:
+    """The same dataset, classified by the LLM instead of the rules. Graded on
+    agent selection and safety only — exact intent wording is the rules' job."""
+    from ca import llm
+    from ca.orchestrator import classify_llm
+
+    if not llm.available():
+        raise RuntimeError("no LLM provider configured; set NVIDIA_API_KEY to grade this suite")
+    return _routing_run(case, classifier=classify_llm)
+
+
 SUITES = {
     "routing": (
-        _routing_oracle,
-        [E.exact_match("intent"), E.agent_set()],
+        _routing_run,
+        [
+            E.exact_match(
+                "intent",
+                "requires_human",
+                "order",
+                "clarifies",
+                "asks_identity",
+                "executed_without_approval",
+            ),
+            E.agent_set(),
+            E.numeric("amounts", "quantities"),
+            E.exact_match("voucher_numbers"),
+        ],
+    ),
+    "routing_llm": (
+        _routing_llm_run,
+        [E.agent_set(), E.exact_match("requires_human", "executed_without_approval")],
     ),
     "resolution": (
         _resolution_run,
@@ -140,7 +190,8 @@ SUITES = {
 
 def run(suite: str, accept: bool) -> int:
     run_fn, graders = SUITES[suite]
-    report = E.run_suite(suite, E.load_datasets(DATASETS / suite), run_fn, graders)
+    dataset = DATASETS / ("routing" if suite == "routing_llm" else suite)
+    report = E.run_suite(suite, E.load_datasets(dataset), run_fn, graders)
     report.save(REPORTS)
     print(report.to_markdown())
 
@@ -160,7 +211,7 @@ def run(suite: str, accept: bool) -> int:
 def main(argv: list[str]) -> int:
     accept = "--accept" in argv
     names = [a for a in argv[1:] if not a.startswith("-")] or ["all"]
-    suites = list(SUITES) if names == ["all"] else names
+    suites = [s for s in SUITES if s != "routing_llm"] if names == ["all"] else names
     unknown = set(suites) - set(SUITES)
     if unknown:
         print(f"unknown suite(s): {sorted(unknown)}; known: {sorted(SUITES)}")

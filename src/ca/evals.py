@@ -106,6 +106,8 @@ def numeric(*fields: str, tolerance: float = 0.01) -> Grader:
     def close(a: Any, b: Any) -> bool:
         if isinstance(a, dict) and isinstance(b, dict):
             return set(a) == set(b) and all(close(a[k], b[k]) for k in a)
+        if isinstance(a, list) and isinstance(b, list):
+            return len(a) == len(b) and all(close(x, y) for x, y in zip(a, b))
         try:
             return abs(float(a) - float(b)) <= tolerance
         except (TypeError, ValueError):
