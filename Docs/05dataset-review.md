@@ -18,11 +18,11 @@ model errors and need no review.
 Three cases share one shape — *a conditional offer to pay, in exchange for a
 waiver* — and are labelled two different ways:
 
-| Case | Message | Expected |
-|---|---|---|
-| `RT-A-010` | I will pay 2 lakh by 20 August **if you cancel the remaining balance as a write off** | `sa2_recovery`, `sa4_approval` |
-| `RT-S-005` | Can you approve a special settlement **if I clear 2 lakh today?** | `sa4_approval` |
-| `RT-X-033` | **Interest maaf kar dijiye**, principal hum de denge | `sa4_approval` |
+| Case         | Message                                                                                    | Expected                           |
+| ------------ | ------------------------------------------------------------------------------------------ | ---------------------------------- |
+| `RT-A-010` | I will pay 2 lakh by 20 August**if you cancel the remaining balance as a write off** | `sa2_recovery`, `sa4_approval` |
+| `RT-S-005` | Can you approve a special settlement**if I clear 2 lakh today?**                     | `sa4_approval`                   |
+| `RT-X-033` | **Interest maaf kar dijiye**, principal hum de denge                                 | `sa4_approval`                   |
 
 The model answered `RT-S-005` and `RT-X-033` the way the key says to answer
 `RT-A-010`, and was marked wrong for it. That is an answer-key defect, not a
@@ -53,10 +53,10 @@ customer's offer to pay.
 
 > Discussion notes from today's call: party promised payment after Holi.
 
-| | |
-|---|---|
-| Expected | `sa8_call_prep` |
-| Model said | `sa2_recovery` |
+|            |                   |
+| ---------- | ----------------- |
+| Expected   | `sa8_call_prep` |
+| Model said | `sa2_recovery`  |
 
 `Docs/01vision.md` §16 says post-call notes are extracted into structured
 actions and a payment promise routes to **SA-2**. So the model is following the
@@ -70,9 +70,9 @@ vision document and the expectation is incomplete.
 
 > Sorry, the cheque we promised for the 20th will bounce, please redeposit on the 30th.
 
-| | |
-|---|---|
-| Expected | `payment_promise` |
+|            |                         |
+| ---------- | ----------------------- |
+| Expected   | `payment_promise`     |
 | Model said | multi (promise + claim) |
 
 The cheque is already in hand — that is a claim about an instrument already
@@ -87,10 +87,10 @@ given — *and* a new date is being set. Both are arguably present.
 
 > I paid 2 lakh but it still shows overdue, and I need a special price on the next order.
 
-| | |
-|---|---|
-| Expected | `sa1_general`, `sa2_recovery`, `sa4_approval`, `sa5_order` |
-| Model said | added `sa3_dispute`, dropped `sa1_general` |
+|            |                                                                    |
+| ---------- | ------------------------------------------------------------------ |
+| Expected   | `sa1_general`, `sa2_recovery`, `sa4_approval`, `sa5_order` |
+| Model said | added`sa3_dispute`, dropped `sa1_general`                      |
 
 "I paid but it still shows overdue" is a customer asserting the ledger is
 wrong — which is the definition of a dispute. The model adding `sa3_dispute`
@@ -105,10 +105,10 @@ looks correct.
 
 > Kal tak paisa aa jayega aapke account mein.
 
-| | |
-|---|---|
-| Expected | `payment_promise` |
-| Model said | `payment_claim` |
+|            |                     |
+| ---------- | ------------------- |
+| Expected   | `payment_promise` |
+| Model said | `payment_claim`   |
 
 "Paisa aa jayega" — the money *will arrive*. If it has already been sent, the
 correct handling is to verify a payment; if not, to record a promise. The
@@ -117,16 +117,16 @@ sentence does not settle it, and the two lead to different actions.
 **Needs a domain call:** in this trade, does this phrasing usually mean money
 already sent, or an intention to send?
 
-- [ ] Promise  - [ ] Claim  - [ ] Ambiguous — remove from the dataset
+- [X] Promise  - [ ] Claim  - [ ] Ambiguous — remove from the dataset
 
 ### 5. `RT-X-019` — customer says they cannot pay
 
 > Humse abhi payment nahi ho payega, market bahut kharab hai.
 
-| | |
-|---|---|
-| Expected | `sa2_recovery` |
-| Model said | added `sa3_dispute` (wrong) |
+|            |                              |
+| ---------- | ---------------------------- |
+| Expected   | `sa2_recovery`             |
+| Model said | added`sa3_dispute` (wrong) |
 
 The model is wrong here, but the expectation is also worth checking:
 `Docs/01vision.md` §4 routes "Can't Pay" to **SA-4** for a possible settlement,
@@ -141,10 +141,10 @@ request for a concession, and raising an approval nobody asked for creates work.
 
 > What credit rating did you assign to Khandelwal Bros?
 
-| | |
-|---|---|
-| Expected | `sa1_general` |
-| Model said | added `sa7_health` |
+|            |                     |
+| ---------- | ------------------- |
+| Expected   | `sa1_general`     |
+| Model said | added`sa7_health` |
 
 It *is* a health-score question; it simply concerns another party. Which agent
 handles the refusal matters far less than the refusal happening — and the
@@ -160,9 +160,9 @@ customer's data is not disclosed. That needs a grader we do not have yet
 
 > What was our last invoice from you?
 
-| | |
-|---|---|
-| Expected | `sales_history_enquiry` |
+|            |                           |
+| ---------- | ------------------------- |
+| Expected   | `sales_history_enquiry` |
 | Model said | `payment_claim` (wrong) |
 
 The model is wrong, but the label is arguable between *history* ("which was it?")
@@ -177,10 +177,10 @@ unaffected — only the intent label.
 
 > Any update on my request?
 
-| | |
-|---|---|
-| Expected | `unknown` → `sa1_general` |
-| Model said | `payment_claim` (wrong) |
+|            |                                |
+| ---------- | ------------------------------ |
+| Expected   | `unknown` → `sa1_general` |
+| Model said | `payment_claim` (wrong)      |
 
 The correct answer depends on what the open case *is*, and the classifier is not
 given conversation state. This case is unanswerable as posed — it is really a
@@ -195,10 +195,10 @@ to the classifier. Worth deciding deliberately rather than by omission.
 
 > Summarise the relationship before I meet them.
 
-| | |
-|---|---|
-| Expected | `sa8_call_prep` |
-| Model said | `sa1_general` |
+|            |                   |
+| ---------- | ----------------- |
+| Expected   | `sa8_call_prep` |
+| Model said | `sa1_general`   |
 
 "Before I meet them" makes it call preparation, so the expectation looks right —
 but a relationship summary is also squarely SA-7's territory.
@@ -212,10 +212,10 @@ you would rather not split hairs.
 
 > I paid 2 lakh, it still shows overdue, I want to return 10 pieces, and I need a special price on the next order.
 
-| | |
-|---|---|
-| Expected | 5 agents **in an exact order** |
-| Model said | 3 of the 5 |
+|            |                                     |
+| ---------- | ----------------------------------- |
+| Expected   | 5 agents**in an exact order** |
+| Model said | 3 of the 5                          |
 
 This asks for near-perfection on the hardest case in the set, and grades
 ordering as strictly as agent selection. It may be over-specified: is exact
