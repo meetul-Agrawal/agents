@@ -89,9 +89,10 @@ def _outstanding(cid: str, entities: dict, message: str, calls: list[ToolCall]) 
     if o is None:
         return "I couldn't retrieve your balance just now; a colleague will follow up.", None
     if o.outstanding <= 0.01 and o.open_bill_count == 0:
-        return "Your account is fully settled — there is no outstanding balance.", None
+        return f"{o.ledger_name} — account is fully settled, no outstanding balance.", None
 
-    line = f"Your current outstanding is {_inr(o.outstanding)} across {o.open_bill_count} open bill(s)."
+    # Name the account: a large figure with no owner reads like a company total.
+    line = f"{o.ledger_name} — current outstanding {_inr(o.outstanding)} across {o.open_bill_count} open bill(s)."
     aged = {k: v for k, v in o.ageing.items() if v > 0}
     if aged:
         line += " Ageing — " + ", ".join(f"{k} days: {_inr(v)}" for k, v in aged.items()) + "."

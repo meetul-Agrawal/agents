@@ -81,6 +81,7 @@ def test_outstanding_answer_states_the_service_figure(monkeypatch):
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
     result = sa1.run(_task("outstanding_enquiry"), _state())
     assert result.status == "completed"
+    assert "Acme Traders" in result.customer_message  # answer names the account it is for
     assert "200,000.00" in result.customer_message
     assert "URD/NE/327" in result.customer_message
 
