@@ -15,9 +15,10 @@ import pytest
 
 from ca import customer360 as c3
 from ca import orchestrator as orc
+from ca import sa1_general as sa1
 from ca import sa2_recovery as sa2
 from ca import services
-from ca.contracts import AgentTask, CustomerAssistState, Event, PaymentPromise
+from ca.contracts import AgentTask, CustomerAssistState, Event, PaymentPromise, Task
 
 CID = "6a6464a39f707bd30403b6cb"
 TODAY = date(2026, 8, 16)
@@ -84,6 +85,7 @@ def recorder(monkeypatch):
     """Capture what SA-2 would commit, without a database, and pin the clock."""
     promises: list[tuple] = []
     events: list[tuple] = []
+    tasks: list[tuple] = []
 
     def fake_promise(cid, amount, due, **kw):
         p = PaymentPromise(customer_id=cid, amount=amount, due_date=due,
@@ -96,10 +98,15 @@ def recorder(monkeypatch):
         events.append((type, kw.get("payload") or {}))
         return Event(customer_id=cid, type=type, source=source), True
 
+    def fake_task(cid, kind, title, **kw):
+        tasks.append((kind, kw.get("due_date")))
+        return Task(customer_id=cid, kind=kind, title=title, due_date=kw.get("due_date")), True
+
     monkeypatch.setattr(services, "record_promise", fake_promise)
     monkeypatch.setattr(services, "record_event", fake_event)
+    monkeypatch.setattr(services, "create_task", fake_task)
     monkeypatch.setattr(sa2, "utcnow", lambda: dt.datetime(2026, 8, 16, tzinfo=dt.timezone.utc))
-    return promises, events
+    return promises, events, tasks
 
 
 def _task(*intents, entities=None):
@@ -113,7 +120,7 @@ def _state(message, customer_id=CID):
 
 
 def test_promise_records_amount_and_parsed_date(recorder):
-    promises, events = recorder
+    promises, events, tasks = recorder
     result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
                      _state("I'll pay 2 lakh by 20 August."))
     assert promises == [(200000.0, date(2026, 8, 20), "created")]
@@ -124,7 +131,7 @@ def test_promise_records_amount_and_parsed_date(recorder):
 
 
 def test_promise_without_a_date_asks_for_one_and_records_nothing(recorder):
-    promises, events = recorder
+    promises, events, tasks = recorder
     result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
                      _state("I will pay 2 lakh soon."))
     assert promises == []
@@ -134,7 +141,7 @@ def test_promise_without_a_date_asks_for_one_and_records_nothing(recorder):
 
 
 def test_unable_to_pay_records_contact_not_a_promise(recorder):
-    promises, events = recorder
+    promises, events, tasks = recorder
     result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
                      _state("I cannot pay right now, no money this month."))
     assert promises == []
@@ -143,7 +150,7 @@ def test_unable_to_pay_records_contact_not_a_promise(recorder):
 
 
 def test_promise_modification_emits_a_modified_event(recorder, monkeypatch):
-    promises, events = recorder
+    promises, events, tasks = recorder
 
     def fake_modify(cid, amount, due, **kw):
         return PaymentPromise(customer_id=cid, amount=amount, due_date=due), "modified"
@@ -186,6 +193,64 @@ def test_no_customer_yields_needs_information(recorder):
     result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
                      _state("I'll pay 2 lakh by 20 August.", customer_id=None))
     assert result.status == "needs_information"
+
+
+# --------------------------------------------------------------------------
+# Follow-up tasks
+# --------------------------------------------------------------------------
+
+
+def test_recorded_promise_creates_a_reminder_task(recorder):
+    promises, events, tasks = recorder
+    sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
+            _state("I'll pay 2 lakh by 20 August."))
+    assert tasks == [("reminder", date(2026, 8, 20))]
+
+
+def test_unable_to_pay_creates_a_followup_task(recorder):
+    promises, events, tasks = recorder
+    sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
+            _state("I cannot pay right now, no money this month."))
+    assert tasks == [("recovery_followup", date(2026, 8, 19))]
+
+
+def test_unverifiable_claim_creates_a_trace_task(recorder, monkeypatch):
+    promises, events, tasks = recorder
+    monkeypatch.setattr(c3, "get_receipts", lambda cid, limit=20: [])
+    sa2.run(_task("payment_claim", entities={"amounts": [200000.0]}),
+            _state("I paid 2 lakh yesterday."))
+    assert tasks == [("payment_trace", date(2026, 8, 18))]
+
+
+def test_verified_claim_creates_no_task(recorder, monkeypatch):
+    promises, events, tasks = recorder
+    monkeypatch.setattr(
+        c3, "get_receipts",
+        lambda cid, limit=20: [{"voucher_number": "RCT/88", "date": date(2026, 8, 15), "amount": 200000.0}],
+    )
+    sa2.run(_task("payment_claim", entities={"amounts": [200000.0]}), _state("I paid 2 lakh."))
+    assert tasks == []
+
+
+# --------------------------------------------------------------------------
+# Shared LLM phrasing pass — verified against the template like SA-1
+# --------------------------------------------------------------------------
+
+
+def test_grounded_rewrite_is_used(recorder, monkeypatch):
+    warm = "Thanks! We've noted you'll pay ₹200,000.00 by 20 Aug 2026. A reminder will follow."
+    monkeypatch.setattr(sa1, "_llm_phrase", lambda template: warm)
+    result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
+                     _state("I'll pay 2 lakh by 20 August."))
+    assert result.customer_message == warm
+
+
+def test_rewrite_that_invents_a_figure_is_rejected(recorder, monkeypatch):
+    monkeypatch.setattr(sa1, "_llm_phrase", lambda template: template + " You also owe ₹999,999.00.")
+    result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
+                     _state("I'll pay 2 lakh by 20 August."))
+    assert "999,999.00" not in result.customer_message
+    assert "200,000.00" in result.customer_message
 
 
 # --------------------------------------------------------------------------
@@ -236,6 +301,13 @@ def test_second_message_modifies_the_open_promise(db):
     assert k1 == "created" and k2 == "modified"
     assert db["payment_promises"].count_documents({"customer_id": CID}) == 1
     assert p2.amount == 150000.0
+
+
+def test_replayed_message_does_not_create_a_second_task(db):
+    for _ in range(2):
+        services.create_task(CID, "reminder", "Collect due", due_date=date(2026, 8, 20),
+                             message_id="MSG-T", db=db)
+    assert db["tasks"].count_documents({"customer_id": CID}) == 1
 
 
 def test_sweep_flips_a_past_due_promise_and_emits_an_event(db):

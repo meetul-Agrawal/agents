@@ -24,7 +24,7 @@ from datetime import date
 from typing import Any
 
 from .config import app_db
-from .contracts import Event, EventType, PaymentPromise, utcnow
+from .contracts import Event, EventType, PaymentPromise, Task, utcnow
 
 
 def _clean(doc: dict[str, Any]) -> dict[str, Any]:
@@ -110,6 +110,39 @@ def record_event(
         doc["_idempotency"] = key
     coll.insert_one(doc)
     return event, True
+
+
+def create_task(
+    customer_id: str,
+    kind: str,
+    title: str,
+    *,
+    due_date: date | None = None,
+    conversation_id: str | None = None,
+    message_id: str | None = None,
+    source: str = "sa2_recovery",
+    db: Any | None = None,
+) -> tuple[Task, bool]:
+    """Record a follow-up. Idempotent on (kind, message_id): the same message
+    cannot spawn two of the same follow-up."""
+    db = db if db is not None else app_db()
+    coll = db["tasks"]
+    key = f"task:{kind}:{message_id}" if message_id else None
+
+    if key:
+        prior = coll.find_one({"_idempotency": key})
+        if prior:
+            return Task.model_validate(_clean(prior)), False
+
+    task = Task(
+        customer_id=customer_id, kind=kind, title=title, due_date=due_date,
+        conversation_id=conversation_id, source=source,
+    )
+    doc = task.model_dump(mode="json")
+    if key:
+        doc["_idempotency"] = key
+    coll.insert_one(doc)
+    return task, True
 
 
 def is_missed(promise: PaymentPromise, as_of: date) -> bool:

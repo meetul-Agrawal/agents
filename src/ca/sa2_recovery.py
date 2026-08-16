@@ -38,7 +38,7 @@ from . import customer360 as c3
 from . import services
 from .contracts import AgentResult, AgentTask, CustomerAssistState, ProposedAction, ToolCall
 from .contracts import utcnow
-from .sa1_general import _inr, _fmt_date, _read  # reuse, don't reimplement
+from .sa1_general import _inr, _fmt_date, _phrase, _read  # reuse, don't reimplement
 
 
 # --------------------------------------------------------------------------
@@ -138,6 +138,23 @@ def _amount(entities: dict[str, Any]) -> float | None:
     return float(amounts[0]) if amounts else None
 
 
+def _add_task(
+    cid: str, kind: str, title: str, due: date | None,
+    meta: dict, calls: list[ToolCall], actions: list[ProposedAction],
+) -> None:
+    task, _ = services.create_task(
+        cid, kind, title, due_date=due,
+        conversation_id=meta["conversation_id"], message_id=meta["message_id"],
+    )
+    calls.append(ToolCall(tool="create_task"))
+    actions.append(ProposedAction(
+        type="create_task", mode="auto",
+        payload={"task_id": task.task_id, "kind": kind,
+                 "due_date": due.isoformat() if due else None},
+        executed=True,
+    ))
+
+
 def _handle_promise(
     cid: str, entities: dict, message: str, meta: dict,
     calls: list[ToolCall], actions: list[ProposedAction],
@@ -149,6 +166,8 @@ def _handle_promise(
             payload={"outcome": "unable_to_pay"},
         )
         calls.append(ToolCall(tool="create_event"))
+        _add_task(cid, "recovery_followup", "Discuss a payment plan with the customer",
+                  utcnow().date() + timedelta(days=3), meta, calls, actions)
         return (
             "Understood — we've noted that you're unable to clear this right now. "
             "A colleague will reach out to discuss a workable plan.",
@@ -190,6 +209,7 @@ def _handle_promise(
         payload={"promise_id": promise.promise_id, "amount": amount, "due_date": due.isoformat()},
         executed=True,
     ))
+    _add_task(cid, "reminder", f"Collect {_inr(amount)} due {_fmt_date(due)}", due, meta, calls, actions)
     verb = "updated" if kind == "modified" else "recorded"
     return (
         f"Thank you — we've {verb} your commitment to pay {_inr(amount)} by {_fmt_date(due)}. "
@@ -199,7 +219,8 @@ def _handle_promise(
 
 
 def _verify_claim(
-    cid: str, entities: dict, message: str, meta: dict, calls: list[ToolCall],
+    cid: str, entities: dict, message: str, meta: dict,
+    calls: list[ToolCall], actions: list[ProposedAction],
 ) -> tuple[str | None, str | None]:
     amount = _amount(entities)
     receipts = _read(calls, "get_receipts", lambda: c3.get_receipts(cid, limit=20), customer_id=cid, limit=20)
@@ -226,6 +247,8 @@ def _verify_claim(
             None,
         )
     claimed = f" of {_inr(amount)}" if amount is not None else ""
+    _add_task(cid, "payment_trace", f"Trace claimed payment{claimed}",
+              utcnow().date() + timedelta(days=2), meta, calls, actions)
     return (
         f"We could not yet locate a payment{claimed} on your account. Could you share the payment "
         "reference (UTR or cheque number) and the date, so we can trace it?",
@@ -271,10 +294,7 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         handler = _DISPATCH.get(name)
         if handler is None:
             continue
-        if handler is _handle_promise:
-            line, st = handler(cid, entities, state.message, meta, calls, actions)
-        else:
-            line, st = handler(cid, entities, state.message, meta, calls)
+        line, st = handler(cid, entities, state.message, meta, calls, actions)
         if line:
             sections.append(line)
         if st:
@@ -282,4 +302,4 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
     if not sections:
         return result("completed", None, calls, actions)
-    return result(status, "\n\n".join(sections), calls, actions)
+    return result(status, _phrase("\n\n".join(sections)), calls, actions)

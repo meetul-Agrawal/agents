@@ -210,7 +210,7 @@ def _llm_phrase(template: str) -> str | None:
 
     from . import llm
 
-    if os.getenv("CA_SA1_PHRASE", "on").lower() == "off" or not llm.available():
+    if os.getenv("CA_PHRASE", "on").lower() == "off" or not llm.available():
         return None
     try:
         out = llm.complete_structured(

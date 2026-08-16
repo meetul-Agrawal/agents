@@ -42,6 +42,7 @@ ID_PREFIXES = {
     "promise": "PRM",
     "health": "HLT",
     "timeline": "TML",
+    "task": "TAS",
     "eval_case": "EVL",
 }
 
@@ -490,6 +491,21 @@ class HealthScore(Contract):
     @property
     def change(self) -> int | None:
         return None if self.previous_score is None else self.score - self.previous_score
+
+
+class Task(Contract):
+    """A follow-up someone must act on later. Unlike an AgentTask (a step inside
+    one run), this outlives the conversation and carries its own due date."""
+
+    task_id: Id = Field(default_factory=lambda: new_id("task"))
+    customer_id: Id
+    kind: Literal["reminder", "recovery_followup", "payment_trace", "other"] = "other"
+    title: NonEmpty
+    due_date: date | None = None
+    status: Literal["open", "done", "cancelled"] = "open"
+    conversation_id: Id | None = None
+    source: str = ""
+    created_at: datetime = Field(default_factory=utcnow)
 
 
 class TimelineEvent(Contract):
