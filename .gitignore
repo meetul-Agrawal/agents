@@ -7,3 +7,4 @@ evals/reports/
 PhaseBuildLogs
 # build artefacts
 src/*.egg-info/
+node_modules

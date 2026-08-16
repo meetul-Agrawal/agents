@@ -12,13 +12,14 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ca.config import CUSTOMER_GROUP_PATH_RE, app_db, tenant_db
 from ca.contracts import Conversation, Message, new_id, utcnow
 from ca import inbox, orchestrator
 
-_UI = pathlib.Path(__file__).parent.parent / "ui" / "index.html"
+_DIST = pathlib.Path(__file__).parent.parent / "ui" / "dist"
 _REVIEWED = pathlib.Path("evals/datasets/routing/reviewed.jsonl")
 
 
@@ -161,8 +162,15 @@ def save_label(body: LabelReq):
     return {"ok": True, "case_id": record["case_id"]}
 
 
-# ── UI ────────────────────────────────────────────────────────────────────────
+# ── UI (Vite build) ───────────────────────────────────────────────────────────
+# Dev: run `npm run dev` in ui/ (Vite proxies /api → this server).
+# Prod: run `npm run build` in ui/, then start this server.
 
 @app.get("/")
 def index():
-    return FileResponse(str(_UI))
+    return FileResponse(str(_DIST / "index.html"))
+
+# Vite puts hashed JS/CSS chunks here after build.
+_assets = _DIST / "assets"
+if _assets.exists():
+    app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
