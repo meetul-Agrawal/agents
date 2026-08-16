@@ -18,10 +18,12 @@ Two boundaries SA-1 owns, not the orchestrator:
 * **No guessing a voucher.** An ambiguous invoice reference is left to the
   orchestrator's clarification; SA-1 reads nothing and states nothing.
 
-ponytail: the reply is templated, not LLM-phrased. For accounting answers a
-template is shorter and safer than a model, and every Phase-4 critical test is
-about factual accuracy. Add an LLM phrasing pass — fed the assembled findings,
-never the raw records — only if a response-quality eval asks for warmer prose.
+The reply is templated. An optional LLM pass rewrites the finished template into
+warmer prose, but the template stays the source of truth: the rewrite is checked
+against it and rejected unless every number and voucher in the rewrite also
+appears in the template (`_grounded`). The model can only reword what is already
+grounded — it is never shown the raw records, and it cannot introduce a figure.
+Without a provider configured the pass is skipped and the template is sent as-is.
 
 ponytail: each enquiry calls the read service afresh, so a message asking two
 things scans the voucher book twice (~280ms each). Fine per conversation; thread
@@ -30,11 +32,12 @@ one `VoucherSet` through the handlers if a batch job ever fans this out.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from typing import Any, Callable
 
 from . import customer360 as c3
-from .contracts import AgentResult, AgentTask, CustomerAssistState, ToolCall
+from .contracts import AgentResult, AgentTask, CustomerAssistState, ModelOutput, ToolCall
 
 
 def _inr(amount: float) -> str:
@@ -156,6 +159,74 @@ _REFUSAL = (
 )
 
 
+# --------------------------------------------------------------------------
+# Optional LLM phrasing — reword the grounded template, never the records
+# --------------------------------------------------------------------------
+
+_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# ponytail: local copy of the orchestrator's voucher pattern — importing it would
+# make sa1 -> orchestrator, and orchestrator already imports sa1. Keep in sync.
+_VOUCHER = re.compile(r"\b[A-Z]{2,6}(?:/[A-Z0-9]{1,6}){1,3}/\d+\b")
+
+
+class _Phrasing(ModelOutput):
+    text: str = ""
+
+
+_PHRASE_SYSTEM = (
+    "You rewrite a customer-service reply for a business-to-business receivables "
+    "desk so it reads a little warmer and more natural. Keep it concise and "
+    "professional.\n"
+    "Absolute rule: never add, remove, or change any number, amount, date or "
+    "invoice reference. Every figure in your reply must already appear in the "
+    "input, unchanged. Invent nothing. Return only the rewritten reply."
+)
+
+
+def _numbers(text: str) -> set[float]:
+    out: set[float] = set()
+    for token in _NUM.findall(text):
+        try:
+            out.add(float(token.replace(",", "")))
+        except ValueError:
+            pass
+    return out
+
+
+def _grounded(template: str, candidate: str) -> bool:
+    """A rewrite is allowed only if it introduces no new figure or voucher.
+    Dropping detail is fine; inventing or altering one is not."""
+    return (
+        bool(candidate.strip())
+        and _numbers(candidate) <= _numbers(template)
+        and set(_VOUCHER.findall(candidate)) <= set(_VOUCHER.findall(template))
+    )
+
+
+def _llm_phrase(template: str) -> str | None:
+    """One model call, or None when no provider is configured. Monkeypatched in
+    tests so the phrasing path is exercised without a network."""
+    import os
+
+    from . import llm
+
+    if os.getenv("CA_SA1_PHRASE", "on").lower() == "off" or not llm.available():
+        return None
+    try:
+        out = llm.complete_structured(
+            _Phrasing, _PHRASE_SYSTEM, f"Rewrite this reply:\n{template}",
+            capability="summarization", example={"text": template},
+        )
+    except llm.LLMUnavailable:
+        return None
+    return out.text or None
+
+
+def _phrase(template: str) -> str:
+    candidate = _llm_phrase(template)
+    return candidate if candidate and _grounded(template, candidate) else template
+
+
 def _intents_of(task: AgentTask) -> list[str]:
     named = task.inputs.get("intents")
     if isinstance(named, list) and named:
@@ -210,4 +281,4 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         status = "needs_information" if any(not c.ok for c in calls) else "completed"
         return result(status, None, calls)
 
-    return result("completed", "\n\n".join(sections), calls)
+    return result("completed", _phrase("\n\n".join(sections)), calls)

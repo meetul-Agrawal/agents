@@ -243,6 +243,48 @@ def test_two_read_intents_combine_into_one_reply(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+# --------------------------------------------------------------------------
+# Optional LLM phrasing — verified against the template, never trusted blindly
+# --------------------------------------------------------------------------
+
+
+def test_grounded_rewrite_is_used(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    warm = "You currently owe ₹200,000.00 on 1 open bill, URD/NE/327 from 01 Jan 2026 (90+ days)."
+    monkeypatch.setattr(sa1, "_llm_phrase", lambda template: warm)
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+    assert result.customer_message == warm
+
+
+def test_rewrite_that_invents_a_figure_is_rejected(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    # Adds ₹9,99,999 that no tool returned — must fall back to the template.
+    monkeypatch.setattr(sa1, "_llm_phrase", lambda template: template + " Also you owe ₹999,999.00 more.")
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+    assert "999,999.00" not in result.customer_message
+    assert _figures(result.customer_message) <= {200000.0}
+
+
+def test_rewrite_that_alters_a_voucher_is_rejected(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    monkeypatch.setattr(
+        sa1, "_llm_phrase",
+        lambda template: "You owe ₹200,000.00 on bill ABC/XY/327.",
+    )
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+    assert "ABC/XY/327" not in result.customer_message
+    assert "URD/NE/327" in result.customer_message
+
+
+def test_grounded_allows_dropping_detail_but_not_adding_it():
+    template = "Outstanding ₹200,000.00 across 1 bill URD/NE/327."
+    assert sa1._grounded(template, "You owe ₹2,00,000 on URD/NE/327.")  # Indian grouping, same value
+    assert sa1._grounded(template, "You have one open bill.")           # dropped figures — fine
+    assert not sa1._grounded(template, "You owe ₹200,000.00 and ₹5,000.00.")  # new figure
+    assert not sa1._grounded(template, "See bill XYZ/AA/999.")          # new voucher
+    assert not sa1._grounded(template, "")                              # empty
+
+
 def test_orchestrator_routes_outstanding_to_the_real_sa1(monkeypatch):
     monkeypatch.setattr(c3, "build_customer_360", lambda cid, **kw: None)
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
