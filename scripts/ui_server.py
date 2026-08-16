@@ -46,11 +46,25 @@ def _clean(doc: dict) -> dict:
 
 @app.get("/api/customers")
 def list_customers():
+    # ponytail: whole debtor list, filtered client-side by the search box. Add a
+    # `?q=` server filter if a tenant ever has more debtors than this cap.
     docs = tenant_db()["ledgers"].find(
         {"groupPath": {"$regex": CUSTOMER_GROUP_PATH_RE}},
         {"_id": 1, "ledgerName": 1},
-    ).limit(500)
-    return [{"customer_id": str(d["_id"]), "display_name": d.get("ledgerName", "")} for d in docs]
+    ).limit(5000)
+    rows = [{"customer_id": str(d["_id"]), "display_name": d.get("ledgerName", "")} for d in docs]
+    rows.sort(key=lambda r: r["display_name"].lower())
+    return rows
+
+
+@app.get("/api/intents")
+def list_intents():
+    """Every intent the classifier can emit — the UI colours each green when the
+    LLM picked it for a message, red when it did not."""
+    return [
+        {"name": name, "agent": spec.agent}
+        for name, spec in sorted(orchestrator.INTENT_CATALOG.items())
+    ]
 
 
 # ── Conversations ─────────────────────────────────────────────────────────────
@@ -136,6 +150,13 @@ def classify(body: ClassifyReq):
     result = orchestrator.summarize(state)
     result["intents_detail"] = [i.model_dump() for i in state.intents]
     result["message_id"] = mid
+    result["classifier"] = body.classifier
+
+    # Stash the classification on the message itself, so clicking it later shows
+    # how the LLM read it — no separate store, it rides in the message metadata.
+    app_db()["messages"].update_one(
+        {"message_id": mid}, {"$set": {"metadata.classification": result}}
+    )
     return result
 
 
