@@ -333,13 +333,20 @@ def compute_outstanding(
         sum(v for k, v in alloc.against_bill.items() if k not in invoices), 2
     )
 
+    invoiced_total = round(sum(a for _, a in invoices.values()), 2)
+    # The true running balance: what they owe once every receipt is subtracted,
+    # whether it was booked Against Ref, On Account, as an advance, or against a
+    # bill that predates this book. This is the ledger closing balance.
+    net_balance = round(customer.opening_balance + invoiced_total - alloc.total_receipted, 2)
+
     return Outstanding(
         customer_id=customer.customer_id,
         ledger_name=customer.ledger_name,
         as_of=as_of,
         outstanding=round(sum(b.outstanding for b in open_bills), 2),
+        net_balance=net_balance,
         open_bill_count=len(open_bills),
-        invoiced_total=round(sum(a for _, a in invoices.values()), 2),
+        invoiced_total=invoiced_total,
         receipted_total=round(alloc.total_receipted, 2),
         allocated_total=round(allocated_total, 2),
         pre_book_settlements=pre_book,

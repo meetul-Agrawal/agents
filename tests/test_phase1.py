@@ -166,6 +166,25 @@ def test_on_account_receipt_does_not_reduce_a_bill():
     assert o.on_account == 400
 
 
+def test_net_balance_subtracts_every_receipt_however_allocated():
+    """Gross open bills ignore an On-Account receipt; the net balance does not."""
+    o = _outstanding(
+        sale("INV-1", 1000),
+        receipt("R1", 400, [("On Account", None, 400)]),    # not tied to a bill
+        receipt("R2", 300, [("Agst Ref", "INV-1", 300)]),   # tied to INV-1
+    )
+    assert o.outstanding == 700   # gross: 1000 - 300 Agst Ref
+    assert o.net_balance == 300   # net: 1000 - 400 - 300, every receipt counted
+
+
+def test_net_balance_counts_pre_book_receipts_that_gross_ignores():
+    """The Saibaba case: a receipt against an off-book bill leaves gross high but
+    still lowers the net owed."""
+    o = _outstanding(sale("INV-1", 1000), receipt("R1", 800, [("Agst Ref", "OLD-999", 800)]))
+    assert o.outstanding == 1000  # pre-book receipt not netted at bill level
+    assert o.net_balance == 200   # but it IS subtracted from the net
+
+
 def test_pre_book_settlement_is_reported_not_netted():
     """A receipt paying an invoice that predates the book must not create a
     phantom credit against in-book bills."""

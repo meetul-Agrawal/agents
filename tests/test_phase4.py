@@ -33,6 +33,7 @@ OUTSTANDING = Outstanding(
     ledger_name="Acme Traders",
     as_of=date(2026, 8, 16),
     outstanding=200000.0,
+    net_balance=200000.0,
     open_bill_count=1,
     invoiced_total=200000.0,
     receipted_total=0.0,
@@ -93,7 +94,7 @@ def test_reply_never_contains_a_figure_the_tool_did_not_return(monkeypatch):
     result = sa1.run(_task("outstanding_enquiry"), _state())
 
     allowed = (
-        {OUTSTANDING.outstanding}
+        {OUTSTANDING.outstanding, OUTSTANDING.net_balance}
         | set(OUTSTANDING.ageing.values())
         | {b.outstanding for b in OUTSTANDING.open_bills}
         | {b.invoice_amount for b in OUTSTANDING.open_bills}
@@ -102,7 +103,9 @@ def test_reply_never_contains_a_figure_the_tool_did_not_return(monkeypatch):
 
 
 def test_settled_account_is_reported_plainly(monkeypatch):
-    settled = OUTSTANDING.model_copy(update={"outstanding": 0.0, "open_bill_count": 0, "open_bills": []})
+    settled = OUTSTANDING.model_copy(
+        update={"outstanding": 0.0, "net_balance": 0.0, "open_bill_count": 0, "open_bills": []}
+    )
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: settled)
     result = sa1.run(_task("outstanding_enquiry"), _state())
     assert "fully settled" in result.customer_message
@@ -309,7 +312,7 @@ def test_two_read_intents_combine_into_one_reply(monkeypatch):
 
 def test_grounded_rewrite_is_used(monkeypatch):
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
-    warm = "You currently owe ₹200,000.00 on 1 open bill, URD/NE/327 from 01 Jan 2026 (90+ days)."
+    warm = "You currently owe ₹200,000.00 for invoice URD/NE/327 dated 01 Jan 2026."
     monkeypatch.setattr(sa1, "_llm_phrase", lambda template: warm)
     result = sa1.run(_task("outstanding_enquiry"), _state())
     assert result.customer_message == warm

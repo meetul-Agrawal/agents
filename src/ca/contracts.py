@@ -173,7 +173,8 @@ class Outstanding(Contract):
     customer_id: Id
     ledger_name: NonEmpty
     as_of: date
-    outstanding: float
+    outstanding: float  # gross: sum of open invoices after their Agst-Ref receipts
+    net_balance: float  # net: opening + invoiced - every receipt (however allocated)
     open_bill_count: int
     invoiced_total: float
     receipted_total: float

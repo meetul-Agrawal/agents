@@ -88,19 +88,26 @@ def _outstanding(cid: str, entities: dict, message: str, calls: list[ToolCall]) 
     o = _read(calls, "get_outstanding", lambda: c3.get_outstanding(cid), customer_id=cid)
     if o is None:
         return "I couldn't retrieve your balance just now; a colleague will follow up.", None
-    if o.outstanding <= 0.01 and o.open_bill_count == 0:
-        return f"{o.ledger_name} — account is fully settled, no outstanding balance.", None
 
-    # Name the account: a large figure with no owner reads like a company total.
-    line = f"{o.ledger_name} — current outstanding {_inr(o.outstanding)} across {o.open_bill_count} open bill(s)."
-    aged = {k: v for k, v in o.ageing.items() if v > 0}
-    if aged:
-        line += " Ageing — " + ", ".join(f"{k} days: {_inr(v)}" for k, v in aged.items()) + "."
+    # The headline is the net balance — every receipt subtracted — not the gross
+    # sum of open invoices, which overstates when payments sit against other bills.
+    net = o.net_balance
+    if net <= 0.01:
+        if net < -0.01:
+            return f"{o.ledger_name} — account is in credit by {_inr(-net)}.", None
+        return f"{o.ledger_name} — account is fully settled, nothing outstanding.", None
+
+    line = f"{o.ledger_name} — outstanding {_inr(net)} (net of all receipts received)."
+    # Only surface the invoice-level gross when it differs, and say why.
+    if o.open_bill_count and abs(o.outstanding - net) > 1:
+        line += (
+            f" At invoice level {o.open_bill_count} bill(s) are still unmatched, totalling "
+            f"{_inr(o.outstanding)}, because earlier payments were booked against other bills."
+        )
     if o.open_bills:
-        oldest = o.open_bills[:3]
-        line += "\nOldest open bill(s):\n" + "\n".join(
-            f"- {b.voucher_number} dated {_fmt_date(b.invoice_date)}: {_inr(b.outstanding)} outstanding"
-            for b in oldest
+        line += "\nOldest open invoice(s):\n" + "\n".join(
+            f"- {b.voucher_number} dated {_fmt_date(b.invoice_date)}: {_inr(b.outstanding)}"
+            for b in o.open_bills[:3]
         )
     return line, None
 
