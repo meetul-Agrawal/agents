@@ -113,9 +113,14 @@ INTENT_RULES: list[tuple[str, str, re.Pattern[str]]] = [
     ("payment_history_enquiry", "sa1_general", re.compile(
         r"\b(payment\s+history|last\s+payment|when\s+did\s+(i|we)\s+(last\s+)?pay|"
         r"receipts?\s+(list|history))\b", re.I)),
+    # Also the "what did I pay for X" price enquiry — a read about a past
+    # purchase, not an order. "special price" is a settlement (matched earlier),
+    # so the lookbehind keeps it out of here.
     ("sales_history_enquiry", "sa1_general", re.compile(
         r"\b(purchase\s+history|sales\s+history|what\s+did\s+(i|we)\s+buy|previous\s+orders?|"
-        r"last\s+(order|invoice|purchase))\b", re.I)),
+        r"last\s+(order|invoice|purchase|price|rate))\b"
+        r"|\b(?<!special\s)(rate|price|cost|mrp|bhav)\s+(of|for|per)\b"
+        r"|\bwhat'?s?\s+the\s+(rate|price|cost|mrp)\b", re.I)),
     ("health_enquiry", "sa7_health", re.compile(
         r"\b(health\s+score|relationship\s+score|customer\s+rating)\b", re.I)),
 ]
@@ -346,7 +351,8 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "sales_history_enquiry": IntentSpec(
         agent="sa1_general",
-        means="wants the record of what they have bought in the past",
+        means="wants the record of what they have bought in the past, or the price "
+              "or rate last charged for a product they bought",
     ),
     "payment_promise": IntentSpec(
         agent="sa2_recovery",
@@ -388,7 +394,9 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
               "delivered: placing a new one, repeating a previous one, adding to or "
               "amending a pending one, cancelling one, and asking whether stock can "
               "be supplied",
-        not_when="goods already delivered are being sent back",
+        not_when="goods already delivered are being sent back, or they are only "
+                 "asking a product price, rate or availability rather than asking "
+                 "for it to be supplied",
     ),
     "settlement_request": IntentSpec(
         agent="sa4_approval",

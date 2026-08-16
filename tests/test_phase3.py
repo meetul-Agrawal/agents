@@ -82,6 +82,15 @@ def test_return_is_not_read_as_an_order():
     assert intents_of("I want to return 20 pieces from URD/NE/327") == ["sales_return"]
 
 
+def test_price_enquiry_is_a_read_not_an_order():
+    """'rate of 5kg atta' asks a price; it must reach SA-1, not SA-5."""
+    assert intents_of("rate of 5kg atta") == ["sales_history_enquiry"]
+    assert intents_of("what is the price of atta 5kg") == ["sales_history_enquiry"]
+    assert "order_capture" not in intents_of("last price of atta")
+    # A special price is still a settlement, not a plain price enquiry.
+    assert "settlement_request" in intents_of("give me a special price on the next order")
+
+
 def test_short_supply_is_a_dispute_not_an_order():
     assert intents_of("Short supply against URD/NE/326, four cartons never received") == ["dispute"]
 
