@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CA Eval — Phase 2/3 Testing</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:system-ui,sans-serif;height:100vh;display:flex;flex-direction:column;background:#f0f0f5}
+    ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#ccc;border-radius:2px}
+
+    /* Left */
+    .left{width:260px;background:#1e1e2e;color:#cdd6f4;display:flex;flex-direction:column;flex-shrink:0}
+    .left-header{padding:12px;border-bottom:1px solid #313244}
+    .left-header label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#6c7086;display:block;margin-bottom:5px}
+    .left-header select{width:100%;background:#313244;color:#cdd6f4;border:1px solid #45475a;border-radius:4px;padding:6px;font-size:12px}
+    .new-btn{margin:8px;background:#89b4fa;color:#1e1e2e;border:none;border-radius:4px;padding:8px;cursor:pointer;font-weight:700;font-size:13px;width:calc(100% - 16px)}
+    .new-btn:hover{background:#74c7ec}
+    .conv-list{flex:1;overflow-y:auto}
+    .conv-item{padding:10px 12px;cursor:pointer;border-bottom:1px solid #313244;font-size:12px}
+    .conv-item:hover{background:#313244}
+    .conv-item.active{background:#45475a}
+    .conv-id{font-family:monospace;color:#89b4fa;font-size:11px}
+    .conv-meta{color:#6c7086;font-size:10px;margin-top:2px}
+    .empty-list{padding:16px;color:#6c7086;font-size:12px}
+
+    /* Center */
+    .center{flex:1;display:flex;flex-direction:column;background:#fff}
+    .center-header{padding:12px 16px;border-bottom:1px solid #e8e8e8;font-size:13px;font-weight:600;color:#333;background:#fff;min-height:44px;display:flex;align-items:center;gap:8px}
+    .center-header .conv-ref{font-family:monospace;color:#89b4fa;font-weight:400}
+    .center-header .cust-name{color:#888;font-weight:400;font-size:12px}
+    .messages{flex:1;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:10px}
+    .no-thread{flex:1;display:flex;align-items:center;justify-content:center;color:#bbb;font-size:14px}
+    .msg{max-width:72%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.55;word-break:break-word}
+    .msg.in{background:#e8eaf6;align-self:flex-end;border-radius:12px 12px 2px 12px}
+    .msg.out{background:#f0f4ff;align-self:flex-start;border-radius:12px 12px 12px 2px;border:1px solid #dde4ff}
+    .msg .ts{font-size:10px;color:#aaa;margin-top:4px}
+    .thinking{font-size:12px;color:#bbb;align-self:flex-start;padding:4px 0}
+    .input-area{padding:10px 12px;border-top:1px solid #e8e8e8;background:#fff;display:flex;gap:8px;align-items:flex-end}
+    .input-area textarea{flex:1;border:1px solid #ddd;border-radius:8px;padding:8px 12px;font-size:13px;resize:none;outline:none;font-family:inherit;line-height:1.5}
+    .input-area textarea:focus{border-color:#89b4fa}
+    .input-area textarea:disabled{background:#f8f8f8}
+    .controls{display:flex;flex-direction:column;gap:6px;align-items:flex-end}
+    .clf-toggle{display:flex;gap:3px}
+    .clf-btn{padding:4px 10px;border:1px solid #ddd;border-radius:4px;font-size:11px;cursor:pointer;background:#fff;color:#666}
+    .clf-btn.on{background:#89b4fa;color:#1e1e2e;border-color:#89b4fa;font-weight:700}
+    .send-btn{background:#89b4fa;color:#1e1e2e;border:none;border-radius:8px;padding:7px 16px;font-weight:700;cursor:pointer;font-size:13px}
+    .send-btn:disabled{opacity:.45;cursor:not-allowed}
+
+    /* Right */
+    .right{width:360px;background:#f8f8fc;border-left:1px solid #e0e0e0;display:flex;flex-direction:column;flex-shrink:0}
+    .right-header{padding:12px 16px;border-bottom:1px solid #e0e0e0;font-weight:600;font-size:14px;color:#333;background:#fff;display:flex;align-items:center;gap:6px}
+    .clf-badge{font-size:11px;font-weight:400;color:#888;background:#f0f0f0;border-radius:4px;padding:2px 6px}
+    .right-body{flex:1;overflow-y:auto;padding:12px}
+    .empty-right{display:flex;align-items:center;justify-content:center;height:160px;color:#bbb;font-size:12px;text-align:center;padding:16px}
+
+    .sec{margin-bottom:14px}
+    .sec-title{font-size:10px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.6px;margin-bottom:6px}
+    .intent-card{background:#fff;border:1px solid #e8e8e8;border-radius:6px;padding:8px 10px;margin-bottom:6px;display:flex;gap:8px;align-items:flex-start}
+    .intent-card input[type=checkbox]{margin-top:3px;flex-shrink:0;cursor:pointer}
+    .intent-body{flex:1;min-width:0}
+    .intent-name{font-weight:600;font-size:13px;color:#1a1a2e}
+    .intent-agent{font-size:11px;color:#89b4fa;margin-top:1px}
+    .intent-conf{font-size:11px;color:#999}
+    .intent-reason{font-size:11px;color:#777;margin-top:3px;font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600}
+    .b-blue{background:#dbeafe;color:#1d4ed8}
+    .b-red{background:#fee2e2;color:#dc2626}
+    .b-green{background:#dcfce7;color:#16a34a}
+    .b-yellow{background:#fef9c3;color:#854d0e}
+    .b-gray{background:#f0f0f0;color:#666}
+    .agent-row{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+    .entity-row{display:flex;gap:6px;font-size:12px;margin-bottom:3px;align-items:baseline}
+    .entity-key{color:#999;min-width:80px;font-size:11px}
+    .field-row{display:flex;gap:8px;align-items:center;margin-bottom:3px;font-size:12px}
+    .field-row input{cursor:pointer}
+    .final-resp{background:#fff;border:1px solid #e8e8e8;border-radius:6px;padding:10px;font-size:12px;color:#444;line-height:1.6}
+
+    /* Label section */
+    .label-section{border-top:1px solid #e0e0e0;padding:12px;background:#fff;flex-shrink:0}
+    .label-title{font-size:10px;font-weight:700;text-transform:uppercase;color:#999;letter-spacing:.6px;margin-bottom:10px}
+    .label-btns{display:flex;gap:8px}
+    .lbtn{flex:1;padding:8px 4px;border-radius:6px;border:none;cursor:pointer;font-weight:700;font-size:12px}
+    .lbtn:hover{opacity:.8}
+    .lbtn.accept{background:#dcfce7;color:#16a34a}
+    .lbtn.partial{background:#fef9c3;color:#854d0e}
+    .lbtn.reject{background:#fee2e2;color:#dc2626}
+    .partial-hint{font-size:11px;color:#666;margin-bottom:8px}
+    .save-btn{width:100%;margin-top:8px;padding:8px;background:#89b4fa;color:#1e1e2e;border:none;border-radius:6px;font-weight:700;cursor:pointer;font-size:13px}
+    .cancel-link{display:block;text-align:center;margin-top:6px;font-size:11px;color:#999;cursor:pointer;text-decoration:underline}
+    .done-box{text-align:center;padding:10px;font-size:13px;font-weight:700;border-radius:6px}
+    .done-box.accept{background:#dcfce7;color:#16a34a}
+    .done-box.partial{background:#fef9c3;color:#854d0e}
+    .done-box.reject{background:#fee2e2;color:#dc2626}
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef } = React;
+
+const api = {
+  get: url => fetch(url).then(r => r.json()),
+  post: (url, body) => fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(r => r.json()),
+};
+
+function fmt(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) +
+         ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+// ── Right panel ───────────────────────────────────────────────────────────────
+
+function RightPanel({ cls, classifier, activeConv, lastInput, customerId }) {
+  const [partial, setPartial] = useState(false);
+  const [checked, setChecked] = useState({});
+  const [done, setDone] = useState(null);
+
+  // Reset when a new classification arrives
+  useEffect(() => { setPartial(false); setChecked({}); setDone(null); }, [cls]);
+
+  if (!cls) {
+    return <div className="empty-right">Send a message to see<br />the LLM classification here</div>;
+  }
+
+  const intents = cls.intents_detail || [];
+  const entities = Object.entries(cls.entities || {}).filter(([k]) => k !== 'message_id');
+
+  const allFields = [
+    ...intents.map(i => 'intent:' + i.name),
+    'agents', 'requires_human', 'entities', 'urgency',
+  ];
+
+  function toggle(key, val) { setChecked(p => ({ ...p, [key]: val })); }
+
+  function buildExpected() {
+    return {
+      intent: cls.intent,
+      intents: cls.intents,
+      agents: cls.agents,
+      requires_human: cls.requires_human,
+      entities: cls.entities,
+      urgency: cls.urgency,
+    };
+  }
+
+  async function submit(label) {
+    const correct = label === 'accept' ? allFields
+                  : label === 'reject' ? []
+                  : allFields.filter(k => checked[k]);
+    const incorrect = label === 'accept' ? []
+                    : label === 'reject' ? allFields
+                    : allFields.filter(k => !checked[k]);
+
+    await api.post('/api/label', {
+      input: lastInput,
+      customer_id: customerId || null,
+      context: { conversation_id: activeConv?.conversation_id },
+      expected: buildExpected(),
+      label,
+      correct_fields: correct,
+      incorrect_fields: incorrect,
+    });
+    setDone(label);
+  }
+
+  const urgencyClass = { high: 'b-red', normal: 'b-blue', low: 'b-green' }[cls.urgency] || 'b-gray';
+
+  return (
+    <>
+      <div className="right-body">
+
+        {/* Intents */}
+        <div className="sec">
+          <div className="sec-title">Intents</div>
+          {intents.length === 0 && <span style={{fontSize:12,color:'#bbb'}}>none detected</span>}
+          {intents.map(i => (
+            <div key={i.name} className="intent-card">
+              {partial && (
+                <input type="checkbox" checked={!!checked['intent:' + i.name]}
+                  onChange={e => toggle('intent:' + i.name, e.target.checked)} />
+              )}
+              <div className="intent-body">
+                <div className="intent-name">{i.name}</div>
+                <div className="intent-agent">→ {i.entities?.agent || '—'}</div>
+                <div className="intent-conf">confidence {(i.confidence * 100).toFixed(0)}%</div>
+                {i.reason && <div className="intent-reason" title={i.reason}>"{i.reason}"</div>}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Agents */}
+        <div className="sec">
+          <div className="sec-title">Agents Selected</div>
+          <div className="agent-row">
+            {partial && (
+              <input type="checkbox" checked={!!checked['agents']}
+                onChange={e => toggle('agents', e.target.checked)} />
+            )}
+            {(cls.agents || []).length === 0 && <span style={{fontSize:12,color:'#bbb'}}>none</span>}
+            {(cls.agents || []).map(a => <span key={a} className="badge b-blue">{a}</span>)}
+          </div>
+        </div>
+
+        {/* Entities */}
+        <div className="sec">
+          <div className="sec-title">Extracted Entities</div>
+          <div className="field-row">
+            {partial && (
+              <input type="checkbox" checked={!!checked['entities']}
+                onChange={e => toggle('entities', e.target.checked)} />
+            )}
+            <div>
+              {entities.length === 0 && <span style={{fontSize:12,color:'#bbb'}}>none</span>}
+              {entities.map(([k, v]) => (
+                <div key={k} className="entity-row">
+                  <span className="entity-key">{k}</span>
+                  <span style={{fontSize:12,color:'#333'}}>{Array.isArray(v) ? v.join(', ') : String(v)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Requires human + urgency */}
+        <div className="sec" style={{display:'flex',gap:20}}>
+          <div>
+            <div className="sec-title">Human Needed</div>
+            <div className="field-row">
+              {partial && (
+                <input type="checkbox" checked={!!checked['requires_human']}
+                  onChange={e => toggle('requires_human', e.target.checked)} />
+              )}
+              <span className={`badge ${cls.requires_human ? 'b-red' : 'b-green'}`}>
+                {cls.requires_human ? 'Yes' : 'No'}
+              </span>
+            </div>
+          </div>
+          <div>
+            <div className="sec-title">Urgency</div>
+            <div className="field-row">
+              {partial && (
+                <input type="checkbox" checked={!!checked['urgency']}
+                  onChange={e => toggle('urgency', e.target.checked)} />
+              )}
+              <span className={`badge ${urgencyClass}`}>{cls.urgency}</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Final response */}
+        {cls.final_response && (
+          <div className="sec">
+            <div className="sec-title">System Response</div>
+            <div className="final-resp">{cls.final_response}</div>
+          </div>
+        )}
+      </div>
+
+      {/* Label controls */}
+      <div className="label-section">
+        <div className="label-title">Label this result</div>
+        {done ? (
+          <div className={`done-box ${done}`}>
+            {done === 'accept' ? '✓ Accepted' : done === 'reject' ? '✗ Rejected' : '~ Partially accepted'}
+            {' — saved to reviewed.jsonl'}
+          </div>
+        ) : partial ? (
+          <div>
+            <div className="partial-hint">Check fields that are <strong>correct</strong>:</div>
+            <button className="save-btn" onClick={() => submit('partial')}>Save Partial Label</button>
+            <span className="cancel-link" onClick={() => { setPartial(false); setChecked({}); }}>cancel</span>
+          </div>
+        ) : (
+          <div className="label-btns">
+            <button className="lbtn accept" onClick={() => submit('accept')}>✓ Accept</button>
+            <button className="lbtn partial" onClick={() => setPartial(true)}>~ Partial</button>
+            <button className="lbtn reject" onClick={() => submit('reject')}>✗ Reject</button>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+// ── App ───────────────────────────────────────────────────────────────────────
+
+function App() {
+  const [customers, setCustomers]   = useState([]);
+  const [convs, setConvs]           = useState([]);
+  const [activeConv, setActiveConv] = useState(null);
+  const [messages, setMessages]     = useState([]);
+  const [input, setInput]           = useState('');
+  const [classifier, setClassifier] = useState('llm');
+  const [cls, setCls]               = useState(null);
+  const [customerId, setCustomerId] = useState('');
+  const [loading, setLoading]       = useState(false);
+  const [lastInput, setLastInput]   = useState('');
+  const bottomRef = useRef(null);
+
+  useEffect(() => {
+    api.get('/api/customers').then(setCustomers).catch(() => {});
+    api.get('/api/conversations').then(setConvs).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!activeConv) return;
+    api.get(`/api/conversations/${activeConv.conversation_id}`)
+      .then(setMessages).catch(() => {});
+    setCls(null);
+  }, [activeConv?.conversation_id]);
+
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
+
+  async function newThread() {
+    const conv = await api.post('/api/conversations', { customer_id: customerId || null });
+    setConvs(prev => [conv, ...prev]);
+    setActiveConv(conv);
+    setMessages([]);
+    setCls(null);
+  }
+
+  async function send() {
+    if (!input.trim() || !activeConv || loading) return;
+    const text = input.trim();
+    setInput('');
+    setLastInput(text);
+    setLoading(true);
+    setCls(null);
+
+    // Optimistic user message
+    setMessages(prev => [...prev, {
+      message_id: 'tmp-' + Date.now(),
+      direction: 'inbound',
+      text,
+      timestamp: new Date().toISOString(),
+    }]);
+
+    try {
+      const result = await api.post('/api/classify', {
+        message: text,
+        customer_id: customerId || null,
+        conversation_id: activeConv.conversation_id,
+        classifier,
+      });
+      setCls(result);
+      // Refresh to get persisted messages (including outbound response)
+      api.get(`/api/conversations/${activeConv.conversation_id}`).then(setMessages);
+      api.get('/api/conversations').then(setConvs);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function onKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+  }
+
+  const activeCustomer = customers.find(c => c.customer_id === customerId);
+
+  return (
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
+
+      {/* ── LEFT ── */}
+      <div className="left">
+        <div className="left-header">
+          <label>Customer</label>
+          <select value={customerId} onChange={e => setCustomerId(e.target.value)}>
+            <option value="">— no customer —</option>
+            {customers.map(c => (
+              <option key={c.customer_id} value={c.customer_id}>{c.display_name}</option>
+            ))}
+          </select>
+        </div>
+
+        <button className="new-btn" onClick={newThread}>+ New Thread</button>
+
+        <div className="conv-list">
+          {convs.length === 0 && <div className="empty-list">No threads yet</div>}
+          {convs.map(c => (
+            <div key={c.conversation_id}
+              className={`conv-item ${activeConv?.conversation_id === c.conversation_id ? 'active' : ''}`}
+              onClick={() => setActiveConv(c)}>
+              <div className="conv-id">…{c.conversation_id?.slice(-10)}</div>
+              <div className="conv-meta">{c.status} · {fmt(c.updated_at)}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* ── CENTER ── */}
+      <div className="center">
+        <div className="center-header">
+          {activeConv ? (
+            <>
+              <span className="conv-ref">{activeConv.conversation_id}</span>
+              {activeCustomer && <span className="cust-name">· {activeCustomer.display_name}</span>}
+            </>
+          ) : 'Select or create a thread'}
+        </div>
+
+        {!activeConv ? (
+          <div className="no-thread">← Select a thread or click + New Thread</div>
+        ) : (
+          <>
+            <div className="messages">
+              {messages.map(m => (
+                <div key={m.message_id} className={`msg ${m.direction === 'inbound' ? 'in' : 'out'}`}>
+                  {m.text}
+                  <div className="ts">{fmt(m.timestamp)}</div>
+                </div>
+              ))}
+              {loading && <div className="thinking">Classifying…</div>}
+              <div ref={bottomRef} />
+            </div>
+
+            <div className="input-area">
+              <textarea
+                rows={3}
+                placeholder="Type a customer message… (Enter to send, Shift+Enter for newline)"
+                value={input}
+                onChange={e => setInput(e.target.value)}
+                onKeyDown={onKey}
+                disabled={loading}
+              />
+              <div className="controls">
+                <div className="clf-toggle">
+                  <button className={`clf-btn ${classifier === 'llm' ? 'on' : ''}`}
+                    onClick={() => setClassifier('llm')}>LLM</button>
+                  <button className={`clf-btn ${classifier === 'rules' ? 'on' : ''}`}
+                    onClick={() => setClassifier('rules')}>Rules</button>
+                </div>
+                <button className="send-btn" onClick={send}
+                  disabled={loading || !input.trim()}>Send</button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── RIGHT ── */}
+      <div className="right">
+        <div className="right-header">
+          Classification
+          {cls && <span className="clf-badge">{classifier.toUpperCase()}</span>}
+        </div>
+        <RightPanel
+          cls={cls}
+          classifier={classifier}
+          activeConv={activeConv}
+          lastInput={lastInput}
+          customerId={customerId}
+        />
+      </div>
+
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
