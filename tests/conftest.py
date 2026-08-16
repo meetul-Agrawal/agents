@@ -15,3 +15,6 @@ def _deterministic_classifier(monkeypatch):
     # no network call, no run-to-run drift. Tests exercise it by monkeypatching
     # sa1_general._llm_phrase directly.
     monkeypatch.setenv("CA_PHRASE", "off")
+    # SA-1's LLM tool-selection fallback is off too — tests exercise it by
+    # monkeypatching sa1_general._plan_tools / _compose_answer directly.
+    monkeypatch.setenv("CA_SA1_TOOLS", "off")

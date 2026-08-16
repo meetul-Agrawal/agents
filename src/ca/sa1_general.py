@@ -32,9 +32,13 @@ one `VoucherSet` through the handlers if a batch job ever fans this out.
 
 from __future__ import annotations
 
+import json
+import os
 import re
 from datetime import date
 from typing import Any, Callable
+
+from pydantic import BaseModel
 
 from . import customer360 as c3
 from .contracts import AgentResult, AgentTask, CustomerAssistState, ModelOutput, ToolCall
@@ -329,6 +333,129 @@ def _phrase(template: str) -> str:
     return candidate if candidate and _grounded(template, candidate) else template
 
 
+# --------------------------------------------------------------------------
+# Tool-selection fallback — the LLM chooses which vetted read to run, we run it
+# --------------------------------------------------------------------------
+#
+# Fires only when no fixed handler answered. The LLM never writes a query and
+# never chooses the customer: it picks a tool name from this menu, we run the
+# deterministic read scoped to *this* customer, and the composed answer is
+# checked against the returned data (`_grounded`) so it cannot invent a figure.
+# Cross-customer access and wrong-money are structurally impossible here.
+
+# menu name -> (what it returns, the registered tool name, cid-scoped reader)
+TOOL_MENU: dict[str, tuple[str, str, Callable[[str], Any]]] = {
+    "outstanding": ("current balance, ageing and open bills", "get_outstanding",
+                    lambda cid: c3.get_outstanding(cid)),
+    "payment_history": ("how much/when they have paid, settle speed", "get_payment_history",
+                        lambda cid: c3.get_payment_history(cid)),
+    "sales_history": ("past invoices with line items (product, rate, qty)", "get_sales_history",
+                      lambda cid: c3.get_sales_history(cid, limit=20)),
+    "receipts": ("individual receipts and what each settled", "get_receipts",
+                 lambda cid: c3.get_receipts(cid, limit=20)),
+    "ledger": ("ledger postings with running balance", "get_customer_ledger",
+               lambda cid: c3.get_customer_ledger(cid)),
+    "timeline": ("recent activity in date order", "get_customer_timeline",
+                 lambda cid: c3.get_customer_timeline(cid, limit=30)),
+}
+
+_PLAN_SYSTEM = (
+    "You choose which read-only tools are needed to answer a customer's question "
+    "about their own account. Return only names from the menu, at most three, and "
+    "an empty list if none fit. Choose nothing you do not need."
+)
+_ANSWER_SYSTEM = (
+    "You answer a customer's question using ONLY the JSON data provided. Quote "
+    "figures, dates and references exactly as they appear in the data. If the data "
+    "does not contain the answer, say you could not find it. Be concise and never "
+    "invent a number, date or reference."
+)
+
+
+class _ToolPlan(ModelOutput):
+    tools: list[str] = []
+
+
+class _Answer(ModelOutput):
+    text: str = ""
+
+
+def _extras_on() -> bool:
+    from . import llm
+
+    return os.getenv("CA_SA1_TOOLS", "on").lower() != "off" and llm.available()
+
+
+def _plan_tools(message: str) -> list[str] | None:
+    """Tool names the model wants to run, or None when unavailable. Monkeypatched
+    in tests so the path is exercised without a network."""
+    if not _extras_on():
+        return None
+    from . import llm
+
+    menu = "\n".join(f"- {name}: {desc}" for name, (desc, _, _) in TOOL_MENU.items())
+    try:
+        plan = llm.complete_structured(
+            _ToolPlan, _PLAN_SYSTEM,
+            f"Question: {message}\n\nTools:\n{menu}\n\nWhich tools are needed?",
+            capability="classification", example={"tools": ["outstanding"]},
+        )
+    except llm.LLMUnavailable:
+        return None
+    chosen = [n for n in plan.tools if n in TOOL_MENU][:3]
+    return chosen or None
+
+
+def _compose_answer(message: str, data_json: str) -> str | None:
+    if not _extras_on():
+        return None
+    from . import llm
+
+    try:
+        answer = llm.complete_structured(
+            _Answer, _ANSWER_SYSTEM, f"Question: {message}\n\nData:\n{data_json}",
+            capability="summarization",
+        )
+    except llm.LLMUnavailable:
+        return None
+    return answer.text or None
+
+
+def _to_jsonable(value: Any) -> Any:
+    if isinstance(value, BaseModel):
+        return value.model_dump(mode="json")
+    if isinstance(value, list):
+        return [_to_jsonable(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _to_jsonable(v) for k, v in value.items()}
+    return value
+
+
+def _tool_fallback(cid: str, message: str, calls: list[ToolCall]) -> str | None:
+    """Plan -> run -> compose, grounded. Returns a customer-ready answer or None.
+
+    ponytail: the grounding check blocks a figure the tools never returned; it
+    does not catch a real figure used in the wrong place. Add per-field checking
+    if an eval shows the model misattributing values across tools.
+    """
+    names = _plan_tools(message)
+    if not names:
+        return None
+
+    results: dict[str, Any] = {}
+    for name in names:
+        desc, tool, fn = TOOL_MENU[name]
+        data = _read(calls, tool, lambda fn=fn: fn(cid), customer_id=cid)
+        if data is not None:
+            results[name] = _to_jsonable(data)
+    if not results:
+        return None
+
+    blob = json.dumps(results, default=str)
+    answer = _compose_answer(message, blob)
+    return answer if answer and _grounded(blob, answer) else None
+
+
 def _intents_of(task: AgentTask) -> list[str]:
     named = task.inputs.get("intents")
     if isinstance(named, list) and named:
@@ -376,6 +503,12 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
             sections.append(line)
         if st:
             status = st
+
+    if not sections:
+        # No fixed handler answered — let the model pick a tool and answer from it.
+        answer = _tool_fallback(cid, state.message, calls)
+        if answer:
+            return result("completed", answer, calls)
 
     if not sections and "unknown" in intents:
         sections.append(_HELP)

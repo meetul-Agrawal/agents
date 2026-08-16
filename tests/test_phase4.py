@@ -7,6 +7,7 @@ needs neither MongoDB nor an LLM.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date
 
@@ -340,6 +341,42 @@ def test_grounded_allows_dropping_detail_but_not_adding_it():
     assert not sa1._grounded(template, "You owe ₹200,000.00 and ₹5,000.00.")  # new figure
     assert not sa1._grounded(template, "See bill XYZ/AA/999.")          # new voucher
     assert not sa1._grounded(template, "")                              # empty
+
+
+# --------------------------------------------------------------------------
+# Tool-selection fallback — LLM picks a vetted read, answer grounded in it
+# --------------------------------------------------------------------------
+
+
+def test_tool_fallback_answers_an_unhandled_question(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    monkeypatch.setattr(sa1, "_plan_tools", lambda message: ["outstanding"])
+    answer = "You currently owe ₹200,000.00 across 1 open bill."
+    monkeypatch.setattr(sa1, "_compose_answer", lambda message, data: answer)
+    result = sa1.run(_task("unknown"), _state(message="give me a quick summary of my account"))
+    assert result.customer_message == answer
+    assert any(c.tool == "get_outstanding" for c in result.tool_calls)
+
+
+def test_tool_fallback_rejects_a_hallucinated_answer(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    monkeypatch.setattr(sa1, "_plan_tools", lambda message: ["outstanding"])
+    monkeypatch.setattr(sa1, "_compose_answer", lambda message, data: "You owe ₹50,000,000.00.")
+    result = sa1.run(_task("unknown"), _state(message="summary please"))
+    assert "50,000,000" not in (result.customer_message or "")
+    assert result.customer_message == sa1._HELP  # grounding rejected it -> help
+
+
+def test_tool_fallback_absent_falls_back_to_help(monkeypatch):
+    monkeypatch.setattr(sa1, "_plan_tools", lambda message: None)
+    result = sa1.run(_task("unknown"), _state(message="anything"))
+    assert result.customer_message == sa1._HELP
+
+
+def test_tool_results_are_json_serialisable():
+    blob = sa1._to_jsonable(OUTSTANDING)
+    json.dumps(blob)  # must not raise
+    assert blob["outstanding"] == 200000.0
 
 
 def test_orchestrator_routes_outstanding_to_the_real_sa1(monkeypatch):
