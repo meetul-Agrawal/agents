@@ -1,0 +1,253 @@
+"""Phase 4 gate: SA-1 answers only from the read services, never invents a
+figure, refuses cross-customer requests, and degrades instead of crashing.
+
+Every test is hermetic: the Customer-360 reads are monkeypatched, so the suite
+needs neither MongoDB nor an LLM.
+"""
+
+from __future__ import annotations
+
+import re
+from datetime import date
+
+import pytest
+
+from ca import customer360 as c3
+from ca import orchestrator as orc
+from ca import sa1_general as sa1
+from ca.contracts import (
+    AgentTask,
+    CustomerAssistState,
+    OpenBill,
+    Outstanding,
+    PaymentBehaviour,
+)
+from ca.registry import AGENTS, get_agent
+
+CID = "6a6464a39f707bd30403b6cb"
+
+# Distinct figures so a hallucinated number would stand out.
+OUTSTANDING = Outstanding(
+    customer_id=CID,
+    ledger_name="Acme Traders",
+    as_of=date(2026, 8, 16),
+    outstanding=200000.0,
+    open_bill_count=1,
+    invoiced_total=200000.0,
+    receipted_total=0.0,
+    allocated_total=0.0,
+    pre_book_settlements=0.0,
+    on_account=0.0,
+    advance=0.0,
+    opening_balance=0.0,
+    ageing={"0-30": 0.0, "31-60": 0.0, "61-90": 0.0, "90+": 200000.0},
+    open_bills=[
+        OpenBill(
+            voucher_number="URD/NE/327",
+            invoice_date=date(2026, 1, 1),
+            invoice_amount=200000.0,
+            allocated=0.0,
+            outstanding=200000.0,
+            age_days=227,
+            bucket="90+",
+        )
+    ],
+)
+
+
+def _task(*intents: str, entities: dict | None = None) -> AgentTask:
+    return AgentTask(
+        agent="sa1_general",
+        action="+".join(intents),
+        inputs={"intents": list(intents), "entities": entities or {}},
+    )
+
+
+def _state(customer_id: str | None = CID) -> CustomerAssistState:
+    return CustomerAssistState(channel="chat", message="?", customer_id=customer_id)
+
+
+def _figures(text: str) -> set[float]:
+    return {float(f.replace(",", "")) for f in re.findall(r"₹([\d,]+(?:\.\d+)?)", text)}
+
+
+# --------------------------------------------------------------------------
+# Grounding — the number always comes from the tool
+# --------------------------------------------------------------------------
+
+
+def test_outstanding_answer_states_the_service_figure(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+    assert result.status == "completed"
+    assert "200,000.00" in result.customer_message
+    assert "URD/NE/327" in result.customer_message
+
+
+def test_reply_never_contains_a_figure_the_tool_did_not_return(monkeypatch):
+    """The core Phase-4 guarantee: no number reaches the customer that did not
+    come out of a read service."""
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+
+    allowed = (
+        {OUTSTANDING.outstanding}
+        | set(OUTSTANDING.ageing.values())
+        | {b.outstanding for b in OUTSTANDING.open_bills}
+        | {b.invoice_amount for b in OUTSTANDING.open_bills}
+    )
+    assert _figures(result.customer_message) <= allowed
+
+
+def test_settled_account_is_reported_plainly(monkeypatch):
+    settled = OUTSTANDING.model_copy(update={"outstanding": 0.0, "open_bill_count": 0, "open_bills": []})
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: settled)
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+    assert "fully settled" in result.customer_message
+    assert _figures(result.customer_message) == set()
+
+
+# --------------------------------------------------------------------------
+# Tool calls — recorded, permitted, and reviewed clean
+# --------------------------------------------------------------------------
+
+
+def test_reads_are_recorded_as_permitted_tool_calls(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+
+    allowed = set(get_agent("sa1_general").tools)
+    assert result.tool_calls
+    assert all(call.tool in allowed for call in result.tool_calls)
+
+
+def test_recorded_tools_pass_the_orchestrator_review(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+    reviewed = orc.review(_state().model_copy(update={"agent_results": [result]}))
+    assert "review_problems" not in reviewed.get("entities", {})
+
+
+def test_get_outstanding_is_a_registered_tool_sa1_may_call():
+    assert "get_outstanding" in AGENTS["sa1_general"].tools
+
+
+# --------------------------------------------------------------------------
+# Security — cross-customer requests are refused, not answered
+# --------------------------------------------------------------------------
+
+
+def test_cross_customer_request_is_refused_and_reads_nothing(monkeypatch):
+    def forbidden(cid):
+        raise AssertionError("SA-1 must not read for a cross-customer request")
+
+    monkeypatch.setattr(c3, "get_outstanding", forbidden)
+    result = sa1.run(_task("cross_customer_request"), _state())
+    assert result.status == "completed"
+    assert "only share information about your own account" in result.customer_message
+    assert result.tool_calls == []
+
+
+def test_refusal_wins_even_alongside_a_normal_enquiry(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    result = sa1.run(_task("cross_customer_request", "outstanding_enquiry"), _state())
+    assert "200,000.00" not in (result.customer_message or "")
+    assert result.tool_calls == []
+
+
+# --------------------------------------------------------------------------
+# Degrading, not crashing
+# --------------------------------------------------------------------------
+
+
+def test_a_failing_read_degrades_and_is_flagged(monkeypatch):
+    def boom(cid):
+        raise c3.CustomerNotFoundError(cid)
+
+    monkeypatch.setattr(c3, "get_outstanding", boom)
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+    assert result.status in {"completed", "needs_information"}
+    assert result.tool_calls and result.tool_calls[0].ok is False
+    assert "CustomerNotFoundError" in result.tool_calls[0].error
+
+
+def test_no_customer_yields_needs_information():
+    result = sa1.run(_task("outstanding_enquiry"), _state(customer_id=None))
+    assert result.status == "needs_information"
+    assert result.customer_message is None
+
+
+def test_ambiguous_reference_is_left_to_the_orchestrator(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    result = sa1.run(_task("ambiguous_reference"), _state())
+    assert result.customer_message is None
+    assert result.tool_calls == []
+
+
+# --------------------------------------------------------------------------
+# Other read intents
+# --------------------------------------------------------------------------
+
+
+def test_payment_history_answer(monkeypatch):
+    behaviour = PaymentBehaviour(
+        receipt_count=3, total_received=450000.0, last_receipt=date(2026, 7, 1),
+        avg_days_to_settle=18.0,
+    )
+    monkeypatch.setattr(c3, "get_payment_history", lambda cid: behaviour)
+    result = sa1.run(_task("payment_history_enquiry"), _state())
+    assert "3 payment(s)" in result.customer_message
+    assert "450,000.00" in result.customer_message
+    assert _figures(result.customer_message) <= {450000.0}
+
+
+def test_sales_history_lists_invoices(monkeypatch):
+    rows = [
+        {"voucher_number": "URD/NE/500", "date": date(2026, 6, 1), "amount": 12000.0},
+        {"voucher_number": "URD/NE/499", "date": date(2026, 5, 1), "amount": 8000.0},
+    ]
+    monkeypatch.setattr(c3, "get_sales_history", lambda cid, limit=5: rows)
+    result = sa1.run(_task("sales_history_enquiry"), _state())
+    assert "URD/NE/500" in result.customer_message
+    assert _figures(result.customer_message) <= {12000.0, 8000.0}
+
+
+def test_document_request_is_acknowledged_not_fabricated():
+    result = sa1.run(
+        _task("document_request", entities={"voucher_numbers": ["URD/NE/327"]}), _state()
+    )
+    assert "URD/NE/327" in result.customer_message
+    assert result.tool_calls == []
+
+
+def test_unknown_intent_gets_a_helpful_prompt():
+    result = sa1.run(_task("unknown"), _state())
+    assert "balance" in result.customer_message
+    assert result.status == "completed"
+
+
+def test_two_read_intents_combine_into_one_reply(monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    monkeypatch.setattr(
+        c3, "get_sales_history",
+        lambda cid, limit=5: [{"voucher_number": "URD/NE/500", "date": date(2026, 6, 1), "amount": 12000.0}],
+    )
+    result = sa1.run(_task("outstanding_enquiry", "sales_history_enquiry"), _state())
+    assert "200,000.00" in result.customer_message
+    assert "URD/NE/500" in result.customer_message
+    assert {call.tool for call in result.tool_calls} == {"get_outstanding", "get_sales_history"}
+
+
+# --------------------------------------------------------------------------
+# Through the orchestrator — SA-1 is now the live sa1_general runner
+# --------------------------------------------------------------------------
+
+
+def test_orchestrator_routes_outstanding_to_the_real_sa1(monkeypatch):
+    monkeypatch.setattr(c3, "build_customer_360", lambda cid, **kw: None)
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
+    state = orc.handle("How much do I owe?", customer_id=CID)
+    summary = orc.summarize(state)
+    assert summary["agents"] == ["sa1_general"]
+    assert summary["statuses"] == ["completed"]
+    assert "200,000.00" in state.final_response

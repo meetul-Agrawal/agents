@@ -12,6 +12,7 @@ from .contracts import ActionMode, AgentSpec, ToolSpec
 READ_TOOLS = [
     ToolSpec(name="get_customer", purpose="Resolve and return customer master data", access="read"),
     ToolSpec(name="get_customer_ledger", purpose="Ledger entries and running balance", access="read"),
+    ToolSpec(name="get_outstanding", purpose="Bill-level outstanding and ageing", access="read"),
     ToolSpec(name="get_sales_history", purpose="Sales vouchers for a customer", access="read"),
     ToolSpec(name="get_receipts", purpose="Receipt vouchers and bill allocations", access="read"),
     ToolSpec(name="get_credit_notes", purpose="Credit notes / sales returns", access="read"),

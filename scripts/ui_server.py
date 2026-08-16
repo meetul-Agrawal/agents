@@ -20,7 +20,9 @@ from ca.contracts import Conversation, Message, new_id, utcnow
 from ca import inbox, orchestrator
 
 _DIST = pathlib.Path(__file__).parent.parent / "ui" / "dist"
-_REVIEWED = pathlib.Path("evals/datasets/routing/reviewed.jsonl")
+# Labels live outside evals/datasets/ on purpose: the eval loader globs every
+# *.jsonl under datasets/ as an EvalCase, and a label record is a different shape.
+_REVIEWED = pathlib.Path("evals/reviewed/routing.jsonl")
 
 
 @asynccontextmanager

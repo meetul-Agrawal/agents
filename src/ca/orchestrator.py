@@ -799,7 +799,10 @@ def mock_agent(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
 
 # Real agents replace entries here as each phase lands.
+from . import sa1_general
+
 AGENT_RUNNERS: dict[str, AgentRunner] = {name: mock_agent for name in AGENT_NAMES}
+AGENT_RUNNERS["sa1_general"] = sa1_general.run
 
 
 def run_agent(
