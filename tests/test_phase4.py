@@ -63,8 +63,8 @@ def _task(*intents: str, entities: dict | None = None) -> AgentTask:
     )
 
 
-def _state(customer_id: str | None = CID) -> CustomerAssistState:
-    return CustomerAssistState(channel="chat", message="?", customer_id=customer_id)
+def _state(customer_id: str | None = CID, message: str = "?") -> CustomerAssistState:
+    return CustomerAssistState(channel="chat", message=message, customer_id=customer_id)
 
 
 def _figures(text: str) -> set[float]:
@@ -210,6 +210,63 @@ def test_sales_history_lists_invoices(monkeypatch):
     result = sa1.run(_task("sales_history_enquiry"), _state())
     assert "URD/NE/500" in result.customer_message
     assert _figures(result.customer_message) <= {12000.0, 8000.0}
+
+
+# --------------------------------------------------------------------------
+# Product price enquiry — looks at the customer's own line items, asks when unsure
+# --------------------------------------------------------------------------
+
+_ATTA_HISTORY = [
+    {"voucher_number": "INV-9", "date": date(2026, 4, 22), "amount": 5000.0,
+     "items": [{"name": "Aashirvaad Atta 5kg", "qty": 10, "rate": 250.0, "amount": 2500.0}]},
+    {"voucher_number": "INV-8", "date": date(2026, 4, 1), "amount": 4800.0,
+     "items": [{"name": "Aashirvaad Atta 5kg", "qty": 10, "rate": 240.0, "amount": 2400.0}]},
+]
+
+
+def test_product_price_reports_last_rate_from_line_items(monkeypatch):
+    monkeypatch.setattr(c3, "get_sales_history", lambda cid, limit=None: _ATTA_HISTORY)
+    result = sa1.run(_task("sales_history_enquiry"),
+                     _state(message="I want the last price of atta 5kg"))
+    assert result.status == "completed"
+    assert "Aashirvaad Atta 5kg" in result.customer_message
+    assert "250.00" in result.customer_message and "INV-9" in result.customer_message
+    assert "240" not in result.customer_message  # only the latest price, not the older one
+
+
+def test_product_price_is_grounded_in_the_line_item(monkeypatch):
+    monkeypatch.setattr(c3, "get_sales_history", lambda cid, limit=None: _ATTA_HISTORY)
+    result = sa1.run(_task("sales_history_enquiry"),
+                     _state(message="last price of atta 5kg"))
+    assert _figures(result.customer_message) <= {250.0}
+
+
+def test_ambiguous_product_asks_which_one(monkeypatch):
+    history = [{"voucher_number": "INV-1", "date": date(2026, 4, 22), "amount": 730.0, "items": [
+        {"name": "Atta 5kg", "qty": 1, "rate": 250.0, "amount": 250.0},
+        {"name": "Atta 10kg", "qty": 1, "rate": 480.0, "amount": 480.0},
+    ]}]
+    monkeypatch.setattr(c3, "get_sales_history", lambda cid, limit=None: history)
+    result = sa1.run(_task("sales_history_enquiry"), _state(message="what's the price of atta?"))
+    assert result.status == "needs_information"
+    assert "Atta 5kg" in result.customer_message and "Atta 10kg" in result.customer_message
+    assert "which" in result.customer_message.lower()
+
+
+def test_named_product_not_in_orders_asks_to_confirm(monkeypatch):
+    history = [{"voucher_number": "INV-1", "date": date(2026, 4, 22), "amount": 60.0,
+                "items": [{"name": "Sugar 1kg", "qty": 1, "rate": 60.0, "amount": 60.0}]}]
+    monkeypatch.setattr(c3, "get_sales_history", lambda cid, limit=None: history)
+    result = sa1.run(_task("sales_history_enquiry"), _state(message="last price of atta 5kg"))
+    assert result.status == "needs_information"
+    assert "couldn't find" in result.customer_message.lower()
+
+
+def test_no_product_named_still_lists_recent_invoices(monkeypatch):
+    monkeypatch.setattr(c3, "get_sales_history", lambda cid, limit=None: _ATTA_HISTORY)
+    result = sa1.run(_task("sales_history_enquiry"), _state(message="show me my purchase history"))
+    assert result.status == "completed"
+    assert "INV-9" in result.customer_message and "most recent invoice" in result.customer_message
 
 
 def test_document_request_is_acknowledged_not_fabricated():

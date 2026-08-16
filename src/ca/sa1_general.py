@@ -74,12 +74,18 @@ def _read(calls: list[ToolCall], tool: str, fn: Callable[[], Any], **arguments: 
 # --------------------------------------------------------------------------
 
 
-def _outstanding(cid: str, entities: dict, calls: list[ToolCall]) -> str | None:
+# A handler answers one intent: it returns (line, status). `status` is usually
+# None (a plain completed answer) but may be "needs_information" when SA-1 has to
+# ask a follow-up rather than guess.
+Handler = Callable[[str, dict, str, list[ToolCall]], "tuple[str | None, str | None]"]
+
+
+def _outstanding(cid: str, entities: dict, message: str, calls: list[ToolCall]) -> tuple[str | None, str | None]:
     o = _read(calls, "get_outstanding", lambda: c3.get_outstanding(cid), customer_id=cid)
     if o is None:
-        return "I couldn't retrieve your balance just now; a colleague will follow up."
+        return "I couldn't retrieve your balance just now; a colleague will follow up.", None
     if o.outstanding <= 0.01 and o.open_bill_count == 0:
-        return "Your account is fully settled — there is no outstanding balance."
+        return "Your account is fully settled — there is no outstanding balance.", None
 
     line = f"Your current outstanding is {_inr(o.outstanding)} across {o.open_bill_count} open bill(s)."
     aged = {k: v for k, v in o.ageing.items() if v > 0}
@@ -91,57 +97,153 @@ def _outstanding(cid: str, entities: dict, calls: list[ToolCall]) -> str | None:
             f"- {b.voucher_number} dated {_fmt_date(b.invoice_date)}: {_inr(b.outstanding)} outstanding"
             for b in oldest
         )
-    return line
+    return line, None
 
 
-def _payments(cid: str, entities: dict, calls: list[ToolCall]) -> str | None:
+def _payments(cid: str, entities: dict, message: str, calls: list[ToolCall]) -> tuple[str | None, str | None]:
     b = _read(calls, "get_payment_history", lambda: c3.get_payment_history(cid), customer_id=cid)
     if b is None:
-        return "I couldn't retrieve your payment history just now; a colleague will follow up."
+        return "I couldn't retrieve your payment history just now; a colleague will follow up.", None
     if b.receipt_count == 0:
-        return "We have no recorded payments from you yet."
+        return "We have no recorded payments from you yet.", None
 
     line = f"We have received {b.receipt_count} payment(s) totalling {_inr(b.total_received)}."
     if b.last_receipt:
         line += f" Your most recent payment was on {_fmt_date(b.last_receipt)}."
     if b.avg_days_to_settle is not None:
         line += f" On average, bills are settled in {b.avg_days_to_settle:.0f} days."
-    return line
+    return line, None
 
 
-def _sales(cid: str, entities: dict, calls: list[ToolCall]) -> str | None:
-    rows = _read(
-        calls, "get_sales_history",
-        lambda: c3.get_sales_history(cid, limit=5), customer_id=cid, limit=5,
-    )
+# --------------------------------------------------------------------------
+# Product identification — grounded in what the customer actually bought
+# --------------------------------------------------------------------------
+
+# Words that carry no product identity, so they never help match an item name.
+_STOP = {
+    "the", "a", "an", "of", "for", "to", "my", "our", "me", "i", "we", "you", "your",
+    "want", "see", "show", "last", "latest", "recent", "price", "prices", "rate",
+    "rates", "cost", "costs", "please", "give", "tell", "what", "whats", "which",
+    "is", "was", "were", "on", "and", "as", "well", "also", "return", "returns",
+    "past", "cause", "because", "due", "quality", "issue", "issues", "order",
+    "orders", "purchase", "purchased", "purchases", "history", "buy", "bought",
+    "get", "this", "that", "from", "in", "at", "it", "with", "about", "much", "how",
+}
+
+# A number glued to a unit — a strong sign the message names a physical product.
+_SIZE = re.compile(
+    r"\b\d+\s?(?:kg|kgs|g|gm|gms|gram|grams|ml|l|ltr|litre|liter|pcs|pc|pkt|packet|dozen|box|bag)\b",
+    re.I,
+)
+
+
+def _norm(text: str) -> str:
+    """'5 kg' -> '5kg', so a spaced size matches a joined one."""
+    return re.sub(r"(\d)\s+(kg|kgs|g|gm|ml|l|ltr|pcs|pc|pkt)\b", r"\1\2", (text or "").lower())
+
+
+def _sig_tokens(text: str) -> set[str]:
+    return {t for t in re.findall(r"[a-z0-9]+", _norm(text)) if len(t) >= 2 and t not in _STOP}
+
+
+def _collect_items(rows: list[dict]) -> dict[str, dict]:
+    """item name -> its most recent line. `rows` are newest-first, so the first
+    time a name appears is its latest price."""
+    items: dict[str, dict] = {}
+    for r in rows:
+        for it in r.get("items") or []:
+            name = (it.get("name") or "").strip()
+            if name and name not in items:
+                items[name] = {
+                    "rate": it.get("rate"), "qty": it.get("qty"),
+                    "date": r.get("date"), "voucher": r.get("voucher_number"),
+                }
+    return items
+
+
+def _match_product(message: str, item_names) -> list[str]:
+    """Item names the message points at, ranked by how many of their significant
+    tokens it mentions. Only the top-scoring tier is returned, so a tie means a
+    genuine ambiguity to ask about. Empty when no purchased product is named."""
+    want = _sig_tokens(message)
+    scored = [(len(_sig_tokens(name) & want), name) for name in item_names]
+    scored = [(s, name) for s, name in scored if s]
+    if not scored:
+        return []
+    best = max(s for s, _ in scored)
+    return [name for s, name in sorted(scored, reverse=True) if s == best]
+
+
+def _sales(cid: str, entities: dict, message: str, calls: list[ToolCall]) -> tuple[str | None, str | None]:
+    rows = _read(calls, "get_sales_history", lambda: c3.get_sales_history(cid), customer_id=cid)
     if rows is None:
-        return "I couldn't retrieve your purchase history just now; a colleague will follow up."
+        return "I couldn't retrieve your purchase history just now; a colleague will follow up.", None
     if not rows:
-        return "We have no sales invoices on record for you."
+        return "We have no sales invoices on record for you.", None
 
-    listed = [r for r in rows if r.get("voucher_number")]
-    return f"Your {len(listed)} most recent invoice(s):\n" + "\n".join(
-        f"- {r['voucher_number']} dated {_fmt_date(r.get('date'))}: {_inr(r.get('amount') or 0)}"
-        for r in listed
+    items = _collect_items(rows)
+    matches = _match_product(message, items.keys())
+
+    if len(matches) == 1:
+        name, occ = matches[0], items[matches[0]]
+        if occ["rate"] is None:
+            return (
+                f"I found {name} in your orders but no unit price was recorded on the latest one "
+                f"({occ['voucher']}). Would you like me to check an earlier invoice?",
+                None,
+            )
+        return (
+            f"The last recorded price of {name} was {_inr(float(occ['rate']))} per unit "
+            f"(invoice {occ['voucher']} dated {_fmt_date(occ['date'])}).",
+            None,
+        )
+
+    if len(matches) > 1:
+        # Several products fit — ask which, rather than guess one.
+        return (
+            f"I have a few products matching that in your orders — {', '.join(matches[:5])}. "
+            "Which one did you mean?",
+            "needs_information",
+        )
+
+    if _SIZE.search(message or ""):
+        # A product was clearly named but is not in their orders: ask, don't dump.
+        return (
+            "I couldn't find that product in your recent orders. Could you confirm the exact name "
+            "and pack size?",
+            "needs_information",
+        )
+
+    listed = [r for r in rows[:5] if r.get("voucher_number")]
+    if not listed:
+        return "We have no sales invoices on record for you.", None
+    return (
+        f"Your {len(listed)} most recent invoice(s):\n" + "\n".join(
+            f"- {r['voucher_number']} dated {_fmt_date(r.get('date'))}: {_inr(r.get('amount') or 0)}"
+            for r in listed
+        ),
+        None,
     )
 
 
-def _document(cid: str, entities: dict, calls: list[ToolCall]) -> str | None:
+def _document(cid: str, entities: dict, message: str, calls: list[ToolCall]) -> tuple[str | None, str | None]:
     # We hold no document-delivery capability, so this acknowledges rather than
     # promising something the system cannot do. No records are read.
     vouchers = entities.get("voucher_numbers") or []
     if vouchers:
         return (
             f"You asked for a copy of {', '.join(vouchers)}. I've logged the request and a "
-            "colleague will send the document to your registered contact."
+            "colleague will send the document to your registered contact.",
+            None,
         )
     return (
         "I've logged your document request. Could you confirm which invoice or statement you'd "
-        "like, and we'll send it across."
+        "like, and we'll send it across.",
+        None,
     )
 
 
-HANDLERS: dict[str, Callable[[str, dict, list[ToolCall]], str | None]] = {
+HANDLERS: dict[str, Handler] = {
     "outstanding_enquiry": _outstanding,
     "payment_history_enquiry": _payments,
     "sales_history_enquiry": _sales,
@@ -264,13 +366,16 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     cid = state.customer_id
     calls: list[ToolCall] = []
     sections: list[str] = []
+    status = "completed"
     for name in intents:
         handler = HANDLERS.get(name)
         if handler is None:
             continue
-        line = handler(cid, entities, calls)
+        line, st = handler(cid, entities, state.message, calls)
         if line:
             sections.append(line)
+        if st:
+            status = st
 
     if not sections and "unknown" in intents:
         sections.append(_HELP)
@@ -281,4 +386,4 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         status = "needs_information" if any(not c.ok for c in calls) else "completed"
         return result(status, None, calls)
 
-    return result("completed", _phrase("\n\n".join(sections)), calls)
+    return result(status, _phrase("\n\n".join(sections)), calls)
