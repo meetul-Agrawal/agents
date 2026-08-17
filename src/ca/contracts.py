@@ -445,6 +445,7 @@ class Event(Contract):
 class Case(Contract):
     case_id: Id = Field(default_factory=lambda: new_id("case"))
     customer_id: Id
+    conversation_id: Id | None = None  # where to send the resolution follow-up
     type: Literal["dispute", "task", "other"] = "dispute"
     status: Literal["open", "investigating", "waiting", "resolved", "closed"] = "open"
     priority: Literal["low", "normal", "high", "critical"] = "normal"
@@ -460,6 +461,7 @@ class Case(Contract):
 class Approval(Contract):
     approval_id: Id = Field(default_factory=lambda: new_id("approval"))
     customer_id: Id
+    conversation_id: Id | None = None  # where to send the decision follow-up
     type: Literal[
         "special_discount",
         "settlement",

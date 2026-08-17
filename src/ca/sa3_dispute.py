@@ -22,9 +22,11 @@ so evidence about a return being "not yet reflected" the way the vision doc's
 example describes cannot be checked here — SA-3 states what the records show
 and nothing it cannot verify.
 
-ponytail: `resolve_case`/`update_dispute`-style follow-up (closing a case,
-adding a colleague's note) is a human workflow step Phase 11 wires up. Phase 6
-only needs a case to open correctly with real evidence attached.
+A case is resolved by a human (`services.resolve_case`, driven from the ops UI
+— see `scripts/ui_server.py`), never by this agent. `resolution_message` builds
+the customer-facing follow-up for that decision; it is templated and grounded
+the same way every other reply here is, and it is the caller's job to actually
+deliver it (`services.send_customer_message`) once a conversation is known.
 """
 
 from __future__ import annotations
@@ -33,7 +35,7 @@ from typing import Any
 
 from . import customer360 as c3
 from . import services
-from .contracts import AgentResult, AgentTask, CustomerAssistState, ProposedAction, ToolCall
+from .contracts import AgentResult, AgentTask, Case, CustomerAssistState, ProposedAction, ToolCall
 from .sa1_general import _fmt_date, _inr, _phrase, _read
 
 
@@ -138,7 +140,8 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     priority = "high" if state.urgency == "high" else "normal"
     title = f"Dispute: {', '.join(voucher_numbers) if voucher_numbers else 'account query'}"
     case, created = services.create_case(
-        cid, title, priority=priority, evidence=evidence, message_id=message_id,
+        cid, title, priority=priority, evidence=evidence,
+        conversation_id=state.conversation_id, message_id=message_id,
     )
     calls.append(ToolCall(tool="create_dispute", arguments={"case_id": case.case_id}))
     actions = [ProposedAction(
@@ -163,3 +166,20 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     return result(
         "needs_information" if unfound else "completed", _phrase(message), calls, case.case_id, actions,
     )
+
+
+def resolution_message(case: Case, outcome: str, note: str = "") -> str:
+    """The follow-up sent once a human resolves a case. Templated and grounded
+    like every other reply here — never a fresh, ungrounded LLM composition."""
+    if outcome == "solved":
+        base = (
+            f"Update on your case {case.case_id} ({case.title}): this has been resolved."
+        )
+    else:
+        base = (
+            f"Update on your case {case.case_id} ({case.title}): after review, we found no "
+            "further action is needed."
+        )
+    if note:
+        base += f" {note}"
+    return _phrase(base)

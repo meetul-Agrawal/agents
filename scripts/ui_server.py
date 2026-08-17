@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from ca.config import CUSTOMER_GROUP_PATH_RE, app_db, tenant_db
 from ca.contracts import Conversation, Message, new_id, utcnow
-from ca import inbox, orchestrator
+from ca import inbox, orchestrator, sa3_dispute, sa4_approval, services
 
 _DIST = pathlib.Path(__file__).parent.parent / "ui" / "dist"
 # Labels live outside evals/datasets/ on purpose: the eval loader globs every
@@ -158,6 +158,93 @@ def classify(body: ClassifyReq):
         {"message_id": mid}, {"$set": {"metadata.classification": result}}
     )
     return result
+
+
+# ── Approvals & Disputes ──────────────────────────────────────────────────────
+# The human side of the approval gateway: SA-4 raises a pending approval and
+# SA-3 opens a case, both write-only from the agent side (`services.py` never
+# lets an agent set anything but "pending"/"open"). This is the one place a
+# human decision is recorded, and the one place `decide_approval`/
+# `resolve_case` are ever called.
+
+def _customer_names(customer_ids: list[str]) -> dict[str, str]:
+    from bson import ObjectId
+    from bson.errors import InvalidId
+
+    oids = []
+    for cid in set(customer_ids):
+        try:
+            oids.append(ObjectId(cid))
+        except (InvalidId, TypeError):
+            pass
+    if not oids:
+        return {}
+    docs = tenant_db()["ledgers"].find({"_id": {"$in": oids}}, {"ledgerName": 1})
+    return {str(d["_id"]): d.get("ledgerName", "") for d in docs}
+
+
+@app.get("/api/approvals")
+def list_approvals(status: str = "pending"):
+    query = {} if status == "all" else {"status": status}
+    docs = list(app_db()["approvals"].find(query).sort("created_at", -1).limit(200))
+    names = _customer_names([d["customer_id"] for d in docs])
+    return [{**_clean(d), "customer_name": names.get(d["customer_id"], d["customer_id"])} for d in docs]
+
+
+@app.get("/api/disputes")
+def list_disputes(status: str = "open"):
+    query = {} if status == "all" else {"status": status}
+    docs = list(app_db()["cases"].find(query).sort("created_at", -1).limit(200))
+    names = _customer_names([d["customer_id"] for d in docs])
+    return [{**_clean(d), "customer_name": names.get(d["customer_id"], d["customer_id"])} for d in docs]
+
+
+class DecideReq(BaseModel):
+    approved: bool
+    decided_by: str = "ops"
+    note: str = ""
+
+
+@app.post("/api/approvals/{approval_id}/decide")
+def decide_approval(approval_id: str, body: DecideReq):
+    approval = services.decide_approval(approval_id, body.approved, body.decided_by)
+    if approval is None:
+        return {"ok": False, "error": "approval not found"}
+
+    text = sa4_approval.decision_message(approval, body.approved, note=body.note)
+    sent = services.send_customer_message(approval.customer_id, approval.conversation_id, text)
+    services.record_event(
+        approval.customer_id, "APPROVAL_APPROVED" if body.approved else "APPROVAL_REJECTED",
+        "ops", conversation_id=approval.conversation_id,
+        payload={"approval_id": approval.approval_id, "decided_by": body.decided_by},
+    )
+    return {"ok": True, "approval": approval.model_dump(mode="json"),
+            "message_sent": sent is not None, "message_text": text}
+
+
+class ResolveReq(BaseModel):
+    outcome: str  # "solved" | "dropped"
+    resolution: str = ""
+    note: str = ""
+
+
+@app.post("/api/disputes/{case_id}/resolve")
+def resolve_dispute(case_id: str, body: ResolveReq):
+    if body.outcome not in services.RESOLUTION_STATUS:
+        return {"ok": False, "error": f"outcome must be one of {list(services.RESOLUTION_STATUS)}"}
+
+    case = services.resolve_case(case_id, body.resolution, outcome=body.outcome)
+    if case is None:
+        return {"ok": False, "error": "case not found"}
+
+    text = sa3_dispute.resolution_message(case, body.outcome, note=body.note)
+    sent = services.send_customer_message(case.customer_id, case.conversation_id, text)
+    services.record_event(
+        case.customer_id, "DISPUTE_CLOSED", "ops", conversation_id=case.conversation_id,
+        payload={"case_id": case.case_id, "outcome": body.outcome},
+    )
+    return {"ok": True, "case": case.model_dump(mode="json"),
+            "message_sent": sent is not None, "message_text": text}
 
 
 # ── Label ─────────────────────────────────────────────────────────────────────

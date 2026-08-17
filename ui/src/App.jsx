@@ -16,6 +16,181 @@ function fmt(iso) {
     ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
+function inr(amount) {
+  if (amount == null) return null
+  return '₹' + Number(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+const APPROVAL_TYPE_LABEL = {
+  special_discount: 'Special discount', settlement: 'Settlement', credit_limit: 'Credit limit',
+  large_credit_note: 'Credit note', write_off: 'Write-off', exceptional_terms: 'Payment terms',
+}
+
+// ── Approval detail — approve / reject ──────────────────────────────────────
+
+function ApprovalDetail({ approval, onDecided }) {
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState(null)
+
+  useEffect(() => { setNote(''); setSent(null) }, [approval?.approval_id])
+
+  if (!approval) return <div className="no-thread">← Pick a pending approval</div>
+
+  async function decide(approved) {
+    setBusy(true)
+    try {
+      const res = await api.post(`/api/approvals/${approval.approval_id}/decide`, {
+        approved, decided_by: 'ops', note,
+      })
+      if (res.ok) { setSent(res); onDecided() }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const context = Object.entries(approval.context || {})
+  const decided = approval.status !== 'pending'
+
+  return (
+    <div className="detail-view">
+      <div className="detail-title">{APPROVAL_TYPE_LABEL[approval.type] ?? approval.type}</div>
+      <div className="detail-sub">
+        {approval.customer_name} · {approval.approval_id}
+        {inr(approval.amount) && <> · {inr(approval.amount)}</>}
+        {' · '}<span className={`badge ${
+          approval.status === 'approved' ? 'b-green' : approval.status === 'rejected' ? 'b-red' : 'b-yellow'
+        }`}>{approval.status}</span>
+      </div>
+
+      <div className="sec">
+        <div className="sec-title">Recommendation</div>
+        <div className="final-resp">{approval.recommendation || 'No recommendation recorded.'}</div>
+      </div>
+
+      {context.length > 0 && (
+        <div className="sec">
+          <div className="sec-title">Context</div>
+          <ul className="detail-list">
+            {context.map(([k, v]) => <li key={k}>{k.replace(/_/g, ' ')}: {String(v)}</li>)}
+          </ul>
+        </div>
+      )}
+
+      {!decided && !sent && (
+        <>
+          <div className="sec-title">Note to customer (optional)</div>
+          <textarea className="detail-note" value={note} onChange={e => setNote(e.target.value)}
+            placeholder="Optional context to include in the customer's reply…" disabled={busy} />
+          <div className="detail-actions">
+            <button className="dbtn dbtn-approve" disabled={busy} onClick={() => decide(true)}>✓ Approve</button>
+            <button className="dbtn dbtn-reject" disabled={busy} onClick={() => decide(false)}>✗ Reject</button>
+          </div>
+        </>
+      )}
+
+      {sent && (
+        <div className="sent-box">
+          <div className="sent-label">{sent.message_sent ? 'Sent to customer' : 'Decision recorded — no conversation to notify'}</div>
+          {sent.message_sent && sent.message_text}
+        </div>
+      )}
+
+      {decided && !sent && (
+        <div className="sent-box">
+          <div className="sent-label">Already decided</div>
+          Decided by {approval.decided_by} on {fmt(approval.decided_at)}.
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Dispute detail — solved / dropped ───────────────────────────────────────
+
+function DisputeDetail({ case_, onResolved }) {
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [sent, setSent] = useState(null)
+
+  useEffect(() => { setNote(''); setSent(null) }, [case_?.case_id])
+
+  if (!case_) return <div className="no-thread">← Pick an open dispute</div>
+
+  async function resolve(outcome) {
+    setBusy(true)
+    try {
+      const res = await api.post(`/api/disputes/${case_.case_id}/resolve`, {
+        outcome, resolution: note, note: '',
+      })
+      if (res.ok) { setSent(res); onResolved() }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const decided = case_.status !== 'open' && case_.status !== 'investigating' && case_.status !== 'waiting'
+
+  return (
+    <div className="detail-view">
+      <div className="detail-title">{case_.title}</div>
+      <div className="detail-sub">
+        {case_.customer_name} · {case_.case_id}
+        {' · '}<span className={`badge ${case_.priority === 'high' || case_.priority === 'critical' ? 'b-red' : 'b-blue'}`}>{case_.priority}</span>
+        {' · '}<span className={`badge ${
+          case_.status === 'resolved' ? 'b-green' : case_.status === 'closed' ? 'b-gray' : 'b-yellow'
+        }`}>{case_.status}</span>
+      </div>
+
+      <div className="sec">
+        <div className="sec-title">Evidence</div>
+        {(!case_.evidence || case_.evidence.length === 0) ? (
+          <span className="muted">none recorded</span>
+        ) : (
+          <ul className="detail-list">
+            {case_.evidence.map((e, i) => (
+              <li key={i}>
+                {e.type === 'voucher_not_found' && <>Could not find {e.voucher_number} on the account.</>}
+                {e.type === 'invoice_on_record' && <>Invoice {e.voucher_number}: {inr(e.amount)} on {e.date}.</>}
+                {e.type === 'receipt_on_record' && <>Receipt against {e.voucher_number}: {inr(e.amount)}.</>}
+                {e.type === 'outstanding_snapshot' && <>Outstanding: {inr(e.outstanding)} across {e.open_bill_count} invoice(s).</>}
+                {!['voucher_not_found', 'invoice_on_record', 'receipt_on_record', 'outstanding_snapshot'].includes(e.type) &&
+                  JSON.stringify(e)}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+
+      {case_.resolution && (
+        <div className="sec">
+          <div className="sec-title">Resolution</div>
+          <div className="final-resp">{case_.resolution}</div>
+        </div>
+      )}
+
+      {!decided && !sent && (
+        <>
+          <div className="sec-title">Resolution note</div>
+          <textarea className="detail-note" value={note} onChange={e => setNote(e.target.value)}
+            placeholder="What was found / what happens next…" disabled={busy} />
+          <div className="detail-actions">
+            <button className="dbtn dbtn-approve" disabled={busy} onClick={() => resolve('solved')}>✓ Solved</button>
+            <button className="dbtn dbtn-drop" disabled={busy} onClick={() => resolve('dropped')}>⨯ Dropped</button>
+          </div>
+        </>
+      )}
+
+      {sent && (
+        <div className="sent-box">
+          <div className="sent-label">{sent.message_sent ? 'Sent to customer' : 'Case updated — no conversation to notify'}</div>
+          {sent.message_sent && sent.message_text}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Right panel ───────────────────────────────────────────────────────────────
 
 function RightPanel({ cls, classifier, activeConv, lastInput, customerId, allIntents }) {
@@ -210,10 +385,35 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null)
   const bottomRef = useRef(null)
 
+  const [leftTab,   setLeftTab]   = useState('threads') // 'threads' | 'approvals' | 'disputes'
+  const [approvals, setApprovals] = useState([])
+  const [disputes,  setDisputes]  = useState([])
+  const [selApproval, setSelApproval] = useState(null)
+  const [selDispute,  setSelDispute]  = useState(null)
+
+  function refreshApprovals() {
+    api.get('/api/approvals').then(rows => {
+      setApprovals(rows)
+      setSelApproval(cur => cur && rows.find(r => r.approval_id === cur.approval_id) || null)
+    }).catch(() => {})
+  }
+  function refreshDisputes() {
+    api.get('/api/disputes').then(rows => {
+      setDisputes(rows)
+      setSelDispute(cur => cur && rows.find(r => r.case_id === cur.case_id) || null)
+    }).catch(() => {})
+  }
+
   useEffect(() => {
     api.get('/api/customers').then(setCustomers).catch(() => {})
     api.get('/api/conversations').then(setConvs).catch(() => {})
     api.get('/api/intents').then(setAllIntents).catch(() => {})
+    refreshApprovals()
+    refreshDisputes()
+    // ponytail: plain poll, not a websocket — an approval/dispute raised from
+    // another channel still shows up within a few seconds without new infra.
+    const id = setInterval(() => { refreshApprovals(); refreshDisputes() }, 15000)
+    return () => clearInterval(id)
   }, [])
 
   useEffect(() => {
@@ -271,6 +471,9 @@ export default function App() {
       setSelectedId(result.message_id)
       api.get(`/api/conversations/${activeConv.conversation_id}`).then(setMessages)
       api.get('/api/conversations').then(setConvs)
+      // A message can create an approval or dispute (sa3/sa4) — surface it right away.
+      if ((result.agents || []).includes('sa4_approval')) refreshApprovals()
+      if ((result.agents || []).includes('sa3_dispute')) refreshDisputes()
     } catch (e) {
       console.error(e)
     } finally {
@@ -289,36 +492,93 @@ export default function App() {
 
       {/* ── LEFT ── */}
       <aside className="left">
-        <div className="left-header">
-          <label>Customer ({customers.length})</label>
-          <CustomerPicker customers={customers} value={customerId} onChange={setCustomerId} />
+        <div className="tab-bar">
+          <button className={`tab-btn${leftTab === 'threads' ? ' active' : ''}`} onClick={() => setLeftTab('threads')}>
+            Threads
+          </button>
+          <button className={`tab-btn${leftTab === 'approvals' ? ' active' : ''}`} onClick={() => setLeftTab('approvals')}>
+            Approvals {approvals.length > 0 && <span className="tab-count">{approvals.length}</span>}
+          </button>
+          <button className={`tab-btn${leftTab === 'disputes' ? ' active' : ''}`} onClick={() => setLeftTab('disputes')}>
+            Disputes {disputes.length > 0 && <span className="tab-count">{disputes.length}</span>}
+          </button>
         </div>
-        <button className="new-btn" onClick={newThread}>+ New Thread</button>
-        <div className="conv-list">
-          {convs.length === 0 && <div className="empty-list">No threads yet</div>}
-          {convs.map(c => (
-            <div key={c.conversation_id}
-              className={`conv-item${activeConv?.conversation_id === c.conversation_id ? ' active' : ''}`}
-              onClick={() => setActiveConv(c)}>
-              <div className="conv-id">…{c.conversation_id?.slice(-10)}</div>
-              <div className="conv-meta">{c.status} · {fmt(c.updated_at)}</div>
+
+        {leftTab === 'threads' && (
+          <>
+            <div className="left-header">
+              <label>Customer ({customers.length})</label>
+              <CustomerPicker customers={customers} value={customerId} onChange={setCustomerId} />
             </div>
-          ))}
-        </div>
+            <button className="new-btn" onClick={newThread}>+ New Thread</button>
+            <div className="conv-list">
+              {convs.length === 0 && <div className="empty-list">No threads yet</div>}
+              {convs.map(c => (
+                <div key={c.conversation_id}
+                  className={`conv-item${activeConv?.conversation_id === c.conversation_id ? ' active' : ''}`}
+                  onClick={() => setActiveConv(c)}>
+                  <div className="conv-id">…{c.conversation_id?.slice(-10)}</div>
+                  <div className="conv-meta">{c.status} · {fmt(c.updated_at)}</div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        {leftTab === 'approvals' && (
+          <div className="conv-list">
+            {approvals.length === 0 && <div className="empty-list">No pending approvals</div>}
+            {approvals.map(a => (
+              <div key={a.approval_id}
+                className={`queue-item${selApproval?.approval_id === a.approval_id ? ' active' : ''}`}
+                onClick={() => setSelApproval(a)}>
+                <div className="queue-title">{APPROVAL_TYPE_LABEL[a.type] ?? a.type}</div>
+                <div className="queue-meta">
+                  <span>{a.customer_name}</span>
+                  {inr(a.amount) && <span>{inr(a.amount)}</span>}
+                  <span className={`badge ${a.status === 'pending' ? 'b-yellow' : a.status === 'approved' ? 'b-green' : 'b-red'}`}>{a.status}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {leftTab === 'disputes' && (
+          <div className="conv-list">
+            {disputes.length === 0 && <div className="empty-list">No open disputes</div>}
+            {disputes.map(c => (
+              <div key={c.case_id}
+                className={`queue-item${selDispute?.case_id === c.case_id ? ' active' : ''}`}
+                onClick={() => setSelDispute(c)}>
+                <div className="queue-title">{c.title}</div>
+                <div className="queue-meta">
+                  <span>{c.customer_name}</span>
+                  <span className={`badge ${c.priority === 'high' || c.priority === 'critical' ? 'b-red' : 'b-blue'}`}>{c.priority}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </aside>
 
       {/* ── CENTER ── */}
       <main className="center">
         <div className="center-header">
-          {activeConv ? (
-            <>
-              <span className="conv-ref">{activeConv.conversation_id}</span>
-              {activeCustomer && <span className="cust-name">· {activeCustomer.display_name}</span>}
-            </>
-          ) : 'Select or create a thread'}
+          {leftTab === 'approvals' ? 'Approvals' : leftTab === 'disputes' ? 'Disputes' : (
+            activeConv ? (
+              <>
+                <span className="conv-ref">{activeConv.conversation_id}</span>
+                {activeCustomer && <span className="cust-name">· {activeCustomer.display_name}</span>}
+              </>
+            ) : 'Select or create a thread'
+          )}
         </div>
 
-        {!activeConv ? (
+        {leftTab === 'approvals' ? (
+          <ApprovalDetail approval={selApproval} onDecided={refreshApprovals} />
+        ) : leftTab === 'disputes' ? (
+          <DisputeDetail case_={selDispute} onResolved={refreshDisputes} />
+        ) : !activeConv ? (
           <div className="no-thread">← Select a thread or click + New Thread</div>
         ) : (
           <>

@@ -28,7 +28,7 @@ from typing import Any
 
 from . import customer360 as c3
 from . import services
-from .contracts import AgentResult, AgentTask, CustomerAssistState, ProposedAction, ToolCall
+from .contracts import AgentResult, AgentTask, Approval, CustomerAssistState, ProposedAction, ToolCall
 from .sa1_general import _inr, _phrase, _read
 
 # The same domain vocabulary INTENT_RULES already uses to detect these asks in
@@ -136,7 +136,8 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
     approval, created = services.create_approval(
         cid, approval_type, "sa4_approval", amount=amount, context=context,
-        recommendation=recommendation, message_id=message_id,
+        recommendation=recommendation, conversation_id=state.conversation_id,
+        message_id=message_id,
     )
     calls.append(ToolCall(tool="create_approval", arguments={"approval_id": approval.approval_id}))
     # "auto" mode: raising the request is safe by design (registry.py). The
@@ -161,3 +162,24 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         "we'll come back to you with a decision."
     )
     return result("needs_approval", _phrase(message), calls, actions)
+
+
+def decision_message(approval: Approval, approved: bool, note: str = "") -> str:
+    """The follow-up sent once a human decides. Templated and grounded like
+    every other reply here — the decision itself came from `decide_approval`,
+    never from this function or from an agent."""
+    label = _LABELS.get(approval.type, approval.type)
+    amount_text = f" of {_inr(approval.amount)}" if approval.amount is not None else ""
+    if approved:
+        base = (
+            f"Good news — your request for {label}{amount_text} (reference "
+            f"{approval.approval_id}) has been approved."
+        )
+    else:
+        base = (
+            f"We've reviewed your request for {label}{amount_text} (reference "
+            f"{approval.approval_id}) and are unable to approve it at this time."
+        )
+    if note:
+        base += f" {note}"
+    return _phrase(base)

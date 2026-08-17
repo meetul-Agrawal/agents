@@ -24,7 +24,7 @@ from datetime import date
 from typing import Any
 
 from .config import app_db
-from .contracts import Approval, Case, Event, EventType, PaymentPromise, Task, utcnow
+from .contracts import Approval, Case, Event, EventType, Message, PaymentPromise, Task, utcnow
 
 
 def _clean(doc: dict[str, Any]) -> dict[str, Any]:
@@ -152,6 +152,7 @@ def create_case(
     type: str = "dispute",
     priority: str = "normal",
     evidence: list[dict[str, Any]] | None = None,
+    conversation_id: str | None = None,
     message_id: str | None = None,
     db: Any | None = None,
 ) -> tuple[Case, bool]:
@@ -167,8 +168,8 @@ def create_case(
             return Case.model_validate(_clean(prior)), False
 
     case = Case(
-        customer_id=customer_id, type=type, priority=priority, title=title,
-        evidence=evidence or [],
+        customer_id=customer_id, conversation_id=conversation_id, type=type,
+        priority=priority, title=title, evidence=evidence or [],
     )
     doc = case.model_dump(mode="json")
     if key:
@@ -177,19 +178,23 @@ def create_case(
     return case, True
 
 
-def resolve_case(case_id: str, resolution: str, *, db: Any | None = None) -> Case | None:
-    """Close a case with its resolution.
+# Case.status has no literal "dropped" value — a dropped dispute is recorded as
+# "closed" (no further action) rather than growing the schema for a label that
+# only changes the customer-facing wording, which resolution_message() owns.
+RESOLUTION_STATUS = {"solved": "resolved", "dropped": "closed"}
 
-    ponytail: no human-workflow trigger yet — call this manually until Phase 11
-    wires an actual review queue. Phase 6 only needs cases to open correctly.
-    """
+
+def resolve_case(
+    case_id: str, resolution: str, *, outcome: str = "solved", db: Any | None = None
+) -> Case | None:
+    """Close a case with its resolution. `outcome` is "solved" or "dropped"."""
     db = db if db is not None else app_db()
     coll = db["cases"]
     doc = coll.find_one({"case_id": case_id})
     if not doc:
         return None
     case = Case.model_validate(_clean(doc)).model_copy(
-        update={"status": "resolved", "resolution": resolution, "updated_at": utcnow()}
+        update={"status": RESOLUTION_STATUS[outcome], "resolution": resolution, "updated_at": utcnow()}
     )
     coll.replace_one({"case_id": case_id}, case.model_dump(mode="json"))
     return case
@@ -203,6 +208,7 @@ def create_approval(
     amount: float | None = None,
     context: dict[str, Any] | None = None,
     recommendation: str = "",
+    conversation_id: str | None = None,
     message_id: str | None = None,
     db: Any | None = None,
 ) -> tuple[Approval, bool]:
@@ -223,8 +229,9 @@ def create_approval(
             return Approval.model_validate(_clean(prior)), False
 
     approval = Approval(
-        customer_id=customer_id, type=type, requested_by=requested_by,
-        amount=amount, context=context or {}, recommendation=recommendation,
+        customer_id=customer_id, conversation_id=conversation_id, type=type,
+        requested_by=requested_by, amount=amount, context=context or {},
+        recommendation=recommendation,
     )
     doc = approval.model_dump(mode="json")
     if key:
@@ -256,6 +263,27 @@ def decide_approval(
     )
     coll.replace_one({"approval_id": approval_id}, approval.model_dump(mode="json"))
     return approval
+
+
+def send_customer_message(
+    customer_id: str, conversation_id: str | None, text: str, *, db: Any | None = None
+) -> Message | None:
+    """Deliver an outbound reply — the follow-up after a human decides an
+    approval or resolves a dispute. Returns None (delivers nothing) when there
+    is no conversation to put it on; the caller decides how to surface that.
+    """
+    if not conversation_id:
+        return None
+    db = db if db is not None else app_db()
+    message = Message(
+        conversation_id=conversation_id, customer_id=customer_id,
+        channel="chat", direction="outbound", text=text,
+    )
+    db["messages"].insert_one(message.model_dump(mode="python"))
+    db["conversations"].update_one(
+        {"conversation_id": conversation_id}, {"$set": {"updated_at": utcnow()}}
+    )
+    return message
 
 
 def is_missed(promise: PaymentPromise, as_of: date) -> bool:

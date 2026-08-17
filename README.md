@@ -256,6 +256,31 @@ From `uv run python -m ca.data_quality` against this book:
 `resolve_customer` raises `AmbiguousCustomerError` rather than guessing whenever
 a query matches more than one customer.
 
+## Ops UI
+
+```bash
+cd ui && npm install && npm run build   # once, or `npm run dev` for hot reload
+uv run uvicorn scripts.ui_server:app --reload
+```
+
+A dev server (`scripts/ui_server.py`) for manually driving conversations and
+the two human decision points the approval gateway creates:
+
+- **Approvals tab** — every pending `Approval` SA-4 has raised, across all
+  customers. Approve/Reject calls `services.decide_approval` (the only place
+  `Approval.status` can leave "pending") and immediately composes and sends
+  the customer follow-up (`sa4_approval.decision_message`, grounded the same
+  way every agent reply is) into the conversation the request came from.
+- **Disputes tab** — every open `Case` SA-3 has opened. Solved/Dropped calls
+  `services.resolve_case` and sends the follow-up
+  (`sa3_dispute.resolution_message`) the same way. "Dropped" reuses the
+  existing `closed` status — only the customer-facing wording differs.
+
+Both send through `services.send_customer_message`, which is a no-op when the
+case/approval has no `conversation_id` (created outside a conversation, e.g.
+directly via a script) — the UI shows "no conversation to notify" rather than
+silently failing.
+
 ## Next
 
 Phase 7 — SA-5 Order Capture + SA-6 Sales Return: transactional agents where

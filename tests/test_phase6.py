@@ -17,6 +17,7 @@ import pytest
 
 from ca import customer360 as c3
 from ca import orchestrator as orc
+from ca import sa1_general as sa1
 from ca import sa3_dispute as sa3
 from ca import sa4_approval as sa4
 from ca import services
@@ -455,3 +456,79 @@ def test_decide_approval_records_rejection(db):
 
 def test_decide_unknown_approval_returns_none(db):
     assert services.decide_approval("APR-2026-doesnotexist", True, "x", db=db) is None
+
+
+def test_resolve_case_dropped_maps_to_the_closed_status(db):
+    """'Dropped' has no dedicated schema value — it is recorded as 'closed', the
+    outcome word only changes the customer-facing text."""
+    case, _ = services.create_case(CID, "Dispute", message_id="MSG-DROP", db=db)
+    dropped = services.resolve_case(case.case_id, "No evidence of an error.", outcome="dropped", db=db)
+    assert dropped.status == "closed"
+
+
+def test_resolve_case_solved_maps_to_resolved(db):
+    case, _ = services.create_case(CID, "Dispute", message_id="MSG-SOLVED", db=db)
+    solved = services.resolve_case(case.case_id, "Credit note issued.", outcome="solved", db=db)
+    assert solved.status == "resolved"
+
+
+# --------------------------------------------------------------------------
+# Follow-up delivery — send_customer_message + the decision/resolution templates
+# --------------------------------------------------------------------------
+
+
+def test_send_customer_message_with_no_conversation_delivers_nothing(db):
+    assert services.send_customer_message(CID, None, "hello", db=db) is None
+    assert db["messages"].count_documents({}) == 0
+
+
+def test_send_customer_message_inserts_an_outbound_message_and_bumps_the_conversation(db):
+    conv_id = "CNV-2026-test"
+    db["conversations"].insert_one({"conversation_id": conv_id, "customer_id": CID,
+                                    "channel": "chat", "status": "open",
+                                    "updated_at": "2020-01-01T00:00:00Z"})
+    msg = services.send_customer_message(CID, conv_id, "Your case has been resolved.", db=db)
+    assert msg.direction == "outbound" and msg.text == "Your case has been resolved."
+    stored = db["conversations"].find_one({"conversation_id": conv_id})
+    assert stored["updated_at"] != "2020-01-01T00:00:00Z"
+
+
+def test_decision_message_states_approval_and_reference():
+    approval = Approval(customer_id=CID, type="settlement", requested_by="sa4_approval",
+                        amount=200000.0)
+    msg = sa4.decision_message(approval, approved=True)
+    assert approval.approval_id in msg
+    assert "200,000.00" in msg
+    assert "approved" in msg.lower()
+
+
+def test_decision_message_states_rejection_without_confirming_approval():
+    approval = Approval(customer_id=CID, type="write_off", requested_by="sa4_approval")
+    msg = sa4.decision_message(approval, approved=False)
+    assert "unable to approve" in msg.lower()
+    assert "has been approved" not in msg.lower()
+
+
+def test_decision_message_never_invents_a_figure(monkeypatch):
+    approval = Approval(customer_id=CID, type="settlement", requested_by="sa4_approval",
+                        amount=200000.0)
+    monkeypatch.setattr(sa1, "_llm_phrase",
+                        lambda template: template + " You also owe ₹999,999.00.")
+    msg = sa4.decision_message(approval, approved=True)
+    assert "999,999.00" not in msg
+
+
+def test_resolution_message_states_solved_and_dropped():
+    case = Case(customer_id=CID, title="Duplicate billing")
+    solved = sa3.resolution_message(case, "solved", note="Refund issued.")
+    assert case.case_id in solved and "resolved" in solved.lower() and "Refund issued." in solved
+
+    dropped = sa3.resolution_message(case, "dropped")
+    assert "no further action" in dropped.lower()
+
+
+def test_resolution_message_never_invents_a_figure(monkeypatch):
+    case = Case(customer_id=CID, title="Duplicate billing")
+    monkeypatch.setattr(sa1, "_llm_phrase", lambda template: template + " Refund of ₹999,999.00.")
+    msg = sa3.resolution_message(case, "solved")
+    assert "999,999.00" not in msg
