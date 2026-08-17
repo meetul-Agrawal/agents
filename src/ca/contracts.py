@@ -230,6 +230,19 @@ class SalesHistoryQuery(Contract):
     metric: Literal["rate", "quantity", "invoices", "all"] = "all"
 
 
+class PaymentHistoryQuery(Contract):
+    """Normalized query parameters for payment/receipt history requests."""
+
+    voucher_number: str | None = None
+    min_amount: float | None = None
+    max_amount: float | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    period: str = "all_time"
+    limit: int | None = None
+    metric: Literal["total_amount", "count", "recent_payments", "settle_speed", "last_payment", "all"] = "all"
+
+
 class DataCapability(Contract):
     """What this tenant's book can and cannot answer. Guards every agent from
     promising data that does not exist."""
@@ -442,6 +455,11 @@ class Request(ModelOutput):
     # used for `intent` against the agent catalog: the model names it, the
     # system checks the name is one it actually recognises.
     approval_type: str | None = None
+
+    @field_validator("about_balance", mode="before")
+    @classmethod
+    def _coerce_about_balance(cls, v: Any) -> bool:
+        return bool(v) if v is not None else False
 
     @field_validator(
         "voucher_ref", "due_date_text", "issue_label", "item_mentioned", "approval_type",

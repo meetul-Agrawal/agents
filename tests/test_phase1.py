@@ -493,3 +493,27 @@ def test_sales_history_query_filtering(live):
     assert res_inv["found"] is True
     assert len(res_inv["records"]) <= 5
 
+
+def test_payment_history_query_filtering(live):
+    from ca.contracts import PaymentHistoryQuery
+    from ca.customer360 import query_payment_history
+
+    cid = "6a6464a19f707bd30403790f"
+
+    # 1. Total all-time
+    q_all = PaymentHistoryQuery(period="all_time")
+    res_all = query_payment_history(cid, q_all)
+    assert res_all["receipt_count"] > 0
+    assert res_all["total_received"] > 0
+
+    # 2. Limit 5 receipts
+    q_recent = PaymentHistoryQuery(metric="recent_payments", limit=5)
+    res_recent = query_payment_history(cid, q_recent)
+    assert len(res_recent["receipts"]) == 5
+    assert res_recent["receipts"][0]["amount"] > 0
+
+    # 3. Filter by amount range
+    q_amt = PaymentHistoryQuery(min_amount=1000000, limit=3)
+    res_amt = query_payment_history(cid, q_amt)
+    assert all(r["amount"] >= 1000000 for r in res_amt["receipts"])
+

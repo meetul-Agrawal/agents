@@ -35,6 +35,7 @@ from .contracts import (
     OpenBill,
     Outstanding,
     PaymentBehaviour,
+    PaymentHistoryQuery,
     SalesHistoryQuery,
     TimelineEvent,
     utcnow,
@@ -471,13 +472,13 @@ def parse_sales_history_query(
             "\n".join(parts),
             capability="structured_completion",
             example={
-                "item_query": "Sattu Aata 500gm",
+                "item_query": None,
                 "voucher_number": None,
                 "start_date": None,
                 "end_date": None,
-                "period": "last_3_months",
-                "limit": 3,
-                "metric": "rate",
+                "period": "all_time",
+                "limit": None,
+                "metric": "all",
             },
         )
     except Exception:
@@ -676,9 +677,167 @@ def payment_behaviour(vs: VoucherSet, *, as_of: date | None = None) -> PaymentBe
     )
 
 
-def get_payment_history(customer_id: str) -> PaymentBehaviour:
+def get_payment_history(
+    customer_id: str,
+    query: PaymentHistoryQuery | None = None,
+) -> PaymentBehaviour | dict[str, Any]:
+    if query is None or (
+        query.period == "all_time"
+        and not query.voucher_number
+        and query.min_amount is None
+        and query.max_amount is None
+        and not query.limit
+        and query.metric in ("all", "settle_speed")
+    ):
+        customer = get_customer(customer_id)
+        return payment_behaviour(fetch_vouchers(customer.ledger_name))
+    return query_payment_history(customer_id, query)
+
+
+PAYMENT_HISTORY_SYSTEM_PROMPT = (
+    "You parse customer enquiries about their payment and receipt history for a "
+    "B2B receivables desk.\n\n"
+    "### Extraction Rules:\n"
+    "1. voucher_number: Exact receipt voucher number or UTR/ref if specified (e.g. 'Rec/Bank/U2/19', 'BARBR52024040200776735').\n"
+    "2. min_amount / max_amount: Numeric value if asking about payments above/below or of a specific amount.\n"
+    "3. metric: 'total_amount' (total paid/amount sent), 'count' (number of payments/receipts), "
+    "'recent_payments' (list of payments/receipts), 'settle_speed' (average days to settle), "
+    "'last_payment' (latest payment date/amount), or 'all' (comprehensive summary).\n"
+    "4. period: 'all_time', 'last_30_days', 'last_3_months', 'last_6_months', 'this_month', 'last_month', "
+    "'this_year', 'last_year', or financial year (e.g. 'fy_24_25', 'fy_25_26', 'fy_26_27').\n"
+    "5. limit: Number of payments/receipts requested (e.g. 1 for 'latest/last payment', 5 for 'last 5 payments').\n"
+    "6. start_date / end_date: Specific YYYY-MM-DD dates if an explicit date range was stated."
+)
+
+
+def parse_payment_history_query(
+    message: str,
+    history: str = "",
+    reference_date: date | None = None,
+) -> PaymentHistoryQuery:
+    today = reference_date or utcnow().date()
+    parts = []
+    if history.strip():
+        parts.append(
+            "<recent_conversation_history>\n"
+            f"{history.strip()}\n"
+            "</recent_conversation_history>\n"
+        )
+    parts.append(
+        f"Today's date is: {today.isoformat()}\n\n"
+        f"<customer_inbound_message>\n{message}\n</customer_inbound_message>\n\n"
+        "Extract the payment history query parameters."
+    )
+    try:
+        return complete_structured(
+            PaymentHistoryQuery,
+            PAYMENT_HISTORY_SYSTEM_PROMPT,
+            "\n".join(parts),
+            capability="structured_completion",
+            example={
+                "voucher_number": None,
+                "min_amount": None,
+                "max_amount": None,
+                "start_date": None,
+                "end_date": None,
+                "period": "all_time",
+                "limit": None,
+                "metric": "all",
+            },
+        )
+    except Exception:
+        return PaymentHistoryQuery()
+
+
+def query_payment_history(
+    customer_id: str,
+    query: PaymentHistoryQuery | None = None,
+    *,
+    reference_date: date | None = None,
+) -> dict[str, Any]:
+    """Execute a structured payment history query against the customer's receipt vouchers."""
+    q = query or PaymentHistoryQuery()
     customer = get_customer(customer_id)
-    return payment_behaviour(fetch_vouchers(customer.ledger_name))
+    vs = fetch_vouchers(customer.ledger_name)
+    invoices = invoice_totals(vs)
+
+    start_d, end_d = _resolve_date_range(q.period, q.start_date, q.end_date, reference_date)
+
+    receipt_records = []
+    lags: list[int] = []
+    settled_invoices: set[str] = set()
+
+    for v in vs.receipts:
+        vdate = _vdate(v)
+        vnum = v.get("voucherNumber") or ""
+        amt = abs(party_amount(v, vs.ledger_name))
+        narr = v.get("narration") or ""
+
+        # Date filtering
+        if vdate:
+            if start_d and vdate < start_d:
+                continue
+            if end_d and vdate > end_d:
+                continue
+
+        # Amount filtering
+        if q.min_amount is not None and amt < q.min_amount:
+            continue
+        if q.max_amount is not None and amt > q.max_amount:
+            continue
+
+        # Voucher / UTR filtering
+        if q.voucher_number:
+            v_clean = q.voucher_number.lower().strip()
+            if v_clean not in vnum.lower() and v_clean not in narr.lower():
+                continue
+
+        # Track invoice settlements and lags
+        allocs = []
+        for entry in _party_entries(v, vs.ledger_name):
+            for bill in entry.get("billAllocations") or []:
+                bname = bill.get("name")
+                if bill.get("billType") == "Agst Ref" and bname:
+                    allocs.append(bname)
+                    if bname in invoices:
+                        settled_invoices.add(bname)
+                        idate = invoices[bname][0]
+                        if idate and vdate:
+                            lags.append((vdate - idate).days)
+
+        receipt_records.append({
+            "voucher_number": vnum,
+            "date": vdate,
+            "amount": round(amt, 2),
+            "narration": narr,
+            "settled_invoices": allocs,
+        })
+
+    # Sort newest first
+    receipt_records.sort(key=lambda r: r["date"] or date.min, reverse=True)
+
+    dates = [r["date"] for r in receipt_records if r["date"]]
+    total_received = sum(r["amount"] for r in receipt_records)
+    avg_settle = round(sum(lags) / len(lags), 1) if lags else None
+
+    # Slice by limit if specified
+    limited_receipts = receipt_records[:q.limit] if q.limit else receipt_records
+
+    return {
+        "query": q.model_dump(mode="json"),
+        "period": q.period,
+        "date_range": {
+            "start": start_d.isoformat() if start_d else None,
+            "end": end_d.isoformat() if end_d else None,
+        },
+        "receipt_count": len(receipt_records),
+        "total_received": round(total_received, 2),
+        "first_receipt": min(dates).isoformat() if dates else None,
+        "last_receipt": max(dates).isoformat() if dates else None,
+        "avg_days_to_settle": avg_settle,
+        "settled_bill_count": len(settled_invoices),
+        "receipts": limited_receipts,
+    }
 
 
 # --------------------------------------------------------------------------

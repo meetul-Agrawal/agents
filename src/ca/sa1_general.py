@@ -35,13 +35,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any, Callable
 
 from pydantic import BaseModel
 
 from . import customer360 as c3
-from .contracts import AgentResult, AgentTask, CustomerAssistState, ModelOutput, ToolCall
+from .contracts import AgentResult, AgentTask, CustomerAssistState, ModelOutput, PaymentBehaviour, ToolCall
 
 
 def _inr(amount: float) -> str:
@@ -67,7 +67,14 @@ def _format_rate(rate_val: Any) -> str:
 
 
 def _fmt_date(value: Any) -> str:
-    return value.strftime("%d %b %Y") if isinstance(value, date) else str(value or "")
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%d %b %Y")
+    if isinstance(value, str) and len(value) == 10 and value.count("-") == 2:
+        try:
+            return date.fromisoformat(value).strftime("%d %b %Y")
+        except Exception:
+            pass
+    return str(value or "")
 
 
 def _read(calls: list[ToolCall], tool: str, fn: Callable[[], Any], **arguments: Any) -> Any:
@@ -128,17 +135,69 @@ def _outstanding(cid: str, entities: dict, message: str, calls: list[ToolCall]) 
 
 
 def _payments(cid: str, entities: dict, message: str, calls: list[ToolCall]) -> tuple[str | None, str | None]:
-    b = _read(calls, "get_payment_history", lambda: c3.get_payment_history(cid), customer_id=cid)
-    if b is None:
+    query = c3.parse_payment_history_query(message)
+    def _fetch():
+        try:
+            return c3.get_payment_history(cid, query)
+        except TypeError:
+            return c3.get_payment_history(cid)
+
+    res = _read(calls, "get_payment_history", _fetch, customer_id=cid)
+    if res is None:
         return "I couldn't retrieve your payment history just now; a colleague will follow up.", None
-    if b.receipt_count == 0:
+
+    if isinstance(res, PaymentBehaviour):
+        if res.receipt_count == 0:
+            return "We have no recorded payments from you yet.", None
+        line = f"We have received {res.receipt_count} payment(s) totalling {_inr(res.total_received)}."
+        if res.last_receipt:
+            line += f" Your most recent payment was on {_fmt_date(res.last_receipt)}."
+        if res.avg_days_to_settle is not None:
+            line += f" On average, bills are settled in {res.avg_days_to_settle:.0f} days."
+        return line, None
+
+    if res.get("receipt_count", 0) == 0:
+        if query.period and query.period != "all_time":
+            return f"We have no recorded payments from you for {query.period.replace('_', ' ')}.", None
         return "We have no recorded payments from you yet.", None
 
-    line = f"We have received {b.receipt_count} payment(s) totalling {_inr(b.total_received)}."
-    if b.last_receipt:
-        line += f" Your most recent payment was on {_fmt_date(b.last_receipt)}."
-    if b.avg_days_to_settle is not None:
-        line += f" On average, bills are settled in {b.avg_days_to_settle:.0f} days."
+    count = res["receipt_count"]
+    total = res["total_received"]
+    last_r = res.get("last_receipt")
+    avg_speed = res.get("avg_days_to_settle")
+    receipts = res.get("receipts") or []
+
+    # 1. Specific voucher or UTR query
+    if query.voucher_number and receipts:
+        r0 = receipts[0]
+        narr_info = f" (Narration: {r0['narration']})" if r0.get("narration") else ""
+        return (
+            f"Receipt {r0['voucher_number']} dated {_fmt_date(r0['date'])} of {_inr(r0['amount'])}{narr_info}.",
+            None,
+        )
+
+    # 2. Recent receipts list requested
+    if query.metric == "recent_payments" or (query.limit and query.limit <= 10 and query.metric != "total_amount"):
+        listed = receipts[: (query.limit or 5)]
+        lines = [f"Your {len(listed)} most recent payment(s):"]
+        for r in listed:
+            lines.append(f"- {r['voucher_number']} dated {_fmt_date(r['date'])}: {_inr(r['amount'])}")
+        return "\n".join(lines), None
+
+    # 3. Specific period total
+    if query.period and query.period != "all_time":
+        period_str = query.period.replace("_", " ")
+        line = f"In {period_str}, we received {count} payment(s) totalling {_inr(total)}."
+        if last_r:
+            line += f" Your latest payment in this period was on {_fmt_date(last_r)}."
+        return line, None
+
+    # 4. Standard overview
+    line = f"We have received {count} payment(s) totalling {_inr(total)}."
+    if last_r:
+        line += f" Your most recent payment was on {_fmt_date(last_r)}."
+    if avg_speed is not None:
+        line += f" On average, bills are settled in {avg_speed:.0f} days."
     return line, None
 
 

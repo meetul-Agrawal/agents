@@ -146,10 +146,8 @@ class IntentSpec:
 INTENT_CATALOG: dict[str, IntentSpec] = {
     "outstanding_enquiry": IntentSpec(
         agent="sa1_general",
-        means="wants to know the amount currently owed, or the state of their account",
-        not_when="the balance is only context for another request, they are reporting a "
-                 "payment or promising one, or they assert the figure they were shown is "
-                 "incorrect — that is a dispute, not an enquiry",
+        means="wants to know the amount currently owed, remaining balance, pending dues, or unpaid invoices",
+        not_when="they are asking about past payments already made, how much was paid in the past, or receipts received",
     ),
     "document_request": IntentSpec(
         agent="sa1_general",
@@ -158,7 +156,8 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "payment_history_enquiry": IntentSpec(
         agent="sa1_general",
-        means="wants the record of what they have paid in the past",
+        means="asks about past payments already made, how much was paid, when a past payment was sent, receipt details, or payment settlement speed",
+        not_when="they are asking how much balance is still pending or owed, or asserting a fresh payment was sent just now",
     ),
     "sales_history_enquiry": IntentSpec(
         agent="sa1_general",
