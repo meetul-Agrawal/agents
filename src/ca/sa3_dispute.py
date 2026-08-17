@@ -134,7 +134,7 @@ def _voucher_evidence(
             item_match = _item_reference_match(number, sales)
             if item_match:
                 evidence.append({
-                    "type": "looks_like_item_ref", "voucher_number": number, "item_name": item_match,
+                    "type": "looks_like_item_ref", "ref_given": number, "item_name": item_match,
                 })
             else:
                 evidence.append({"type": "voucher_not_found", "voucher_number": number})
@@ -184,8 +184,9 @@ def _summarize(evidence: list[dict[str, Any]]) -> tuple[str, bool]:
         elif kind == "voucher_not_found":
             lines.append(f"We could not find {item['voucher_number']} on your account at all.")
         elif kind == "looks_like_item_ref":
+            ref = item.get("ref_given") or item.get("voucher_number")
             lines.append(
-                f"{item['voucher_number']} matches the item \"{item['item_name']}\" in your "
+                f"\"{ref}\" matches the item \"{item['item_name']}\" in your "
                 "purchase history, not an invoice number."
             )
             needs_more = True
@@ -289,7 +290,7 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
     summary, ambiguous_item = _summarize(evidence)
     unfound = [e["voucher_number"] for e in evidence if e["type"] == "voucher_not_found"]
-    item_refs = [e["voucher_number"] for e in evidence if e["type"] == "looks_like_item_ref"]
+    item_refs = [e.get("ref_given") or e.get("voucher_number") for e in evidence if e["type"] == "looks_like_item_ref"]
     needs_more = bool(unfound) or bool(item_refs) or ambiguous_item
 
     facts: dict[str, Any] = {"case_id": case.case_id, "evidence": _grounding_evidence(evidence)}
@@ -310,10 +311,14 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         "the case is opened, summarize the evidence, and say a colleague will review.",
         facts,
     )
-    # Guard: if no question was requested but the LLM invented one, reject it
-    # and fall through to the deterministic template which is already correct.
-    if composed and "ask" not in facts and "?" in composed:
-        composed = None
+    # Guard: if a question was requested ('ask' in facts) but LLM failed to ask it,
+    # or if no question was requested ('ask' not in facts) but LLM invented one,
+    # reject the composition and fall through to the verified deterministic template.
+    if composed:
+        has_question = "?" in composed
+        wants_question = "ask" in facts
+        if has_question != wants_question:
+            composed = None
     message = composed or _phrase(
         f"Thank you for flagging this — we've opened case {case.case_id} to look into it. "
         f"{summary}"

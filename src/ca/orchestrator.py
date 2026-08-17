@@ -1058,7 +1058,7 @@ def classify_intent(
         entities.update(entities_from(understanding, state.message))
 
     # Carry forward voucher numbers from prior messages in this conversation
-    # so follow-up messages ("that invoice") can resolve against them.
+    # if no voucher was extracted in the current turn.
     if not entities.get("voucher_numbers"):
         conv_ctx = _conversation_context(state.conversation_id)
         if conv_ctx.get("prior_voucher_numbers"):
