@@ -79,12 +79,36 @@ def _find(rows: list[dict[str, Any]], voucher_number: str) -> dict[str, Any] | N
     return None
 
 
+def _item_reference_match(number: str, sales: list[dict[str, Any]]) -> str | None:
+    """A ref this customer's own invoices never show as a voucher number, but
+    that turns up inside one of their real product names, is more likely a
+    stock-item code the model misread as an invoice ref than an actual invoice
+    that simply doesn't exist. Grounded against this customer's own catalog —
+    not a fixed naming-convention pattern — so it holds regardless of how a
+    given client names their items. Returns the matching item name, or None.
+
+    Measured need: asking the extraction model to tell an invoice ref from an
+    item code by prompt instruction alone still guessed the item code as the
+    ref in 5/5 samples (see sa3_dispute tests) — the model can't be trusted to
+    self-police here, so this checks the claim against real data instead.
+    """
+    needle = number.lower()
+    for sale in sales:
+        for it in (sale.get("items") or []):
+            name = it.get("name") or ""
+            if needle in name.lower():
+                return name
+    return None
+
+
 def _voucher_evidence(
     cid: str, voucher_numbers: list[str], message: str, calls: list[ToolCall]
 ) -> list[dict[str, Any]]:
     """One evidence entry per cited voucher: what our own records show for it —
-    including its line items, so "which stock item" has an answer — or the fact
-    that it does not appear on this account at all."""
+    including its line items, so "which stock item" has an answer — the fact
+    that it does not appear on this account at all — or, when it doesn't
+    appear as a voucher but does appear inside a real product name, that it
+    looks like an item reference rather than an invoice number."""
     sales = _read(calls, "get_sales_history", lambda: c3.get_sales_history(cid), customer_id=cid) or []
     receipts = _read(calls, "get_receipts", lambda: c3.get_receipts(cid), customer_id=cid) or []
 
@@ -107,7 +131,13 @@ def _voucher_evidence(
                 "against_bills": receipt.get("against_bills"),
             })
         if not sale and not receipt:
-            evidence.append({"type": "voucher_not_found", "voucher_number": number})
+            item_match = _item_reference_match(number, sales)
+            if item_match:
+                evidence.append({
+                    "type": "looks_like_item_ref", "voucher_number": number, "item_name": item_match,
+                })
+            else:
+                evidence.append({"type": "voucher_not_found", "voucher_number": number})
     return evidence
 
 
@@ -153,6 +183,12 @@ def _summarize(evidence: list[dict[str, Any]]) -> tuple[str, bool]:
             )
         elif kind == "voucher_not_found":
             lines.append(f"We could not find {item['voucher_number']} on your account at all.")
+        elif kind == "looks_like_item_ref":
+            lines.append(
+                f"{item['voucher_number']} matches the item \"{item['item_name']}\" in your "
+                "purchase history, not an invoice number."
+            )
+            needs_more = True
         elif kind == "outstanding_snapshot":
             lines.append(
                 f"Your current outstanding is {_inr(item['outstanding'])} across "
@@ -253,10 +289,16 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
     summary, ambiguous_item = _summarize(evidence)
     unfound = [e["voucher_number"] for e in evidence if e["type"] == "voucher_not_found"]
-    needs_more = bool(unfound) or ambiguous_item
+    item_refs = [e["voucher_number"] for e in evidence if e["type"] == "looks_like_item_ref"]
+    needs_more = bool(unfound) or bool(item_refs) or ambiguous_item
 
     facts: dict[str, Any] = {"case_id": case.case_id, "evidence": _grounding_evidence(evidence)}
-    if unfound:
+    if item_refs:
+        facts["ask"] = (
+            "confirm the actual invoice/bill number — the number they gave matches an item "
+            "name, not an invoice, on their account"
+        )
+    elif unfound:
         facts["ask"] = "confirm the invoice number, which could not be found on their account"
     elif ambiguous_item:
         facts["ask"] = "confirm which item on the invoice they mean"
@@ -275,7 +317,8 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     message = composed or _phrase(
         f"Thank you for flagging this — we've opened case {case.case_id} to look into it. "
         f"{summary}"
-        + (" Could you double-check the invoice number?" if unfound
+        + (" Could you share the actual invoice/bill number?" if item_refs
+           else " Could you double-check the invoice number?" if unfound
            else " Which item on that invoice did you mean?" if ambiguous_item else "")
         + " A colleague will review the details and get back to you."
     )

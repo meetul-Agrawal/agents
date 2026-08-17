@@ -138,6 +138,31 @@ def test_duplicate_invoice_claim_against_a_number_not_on_record(case_recorder, m
     assert _figures(result.customer_message) == set()  # nothing to ground a figure on
 
 
+def test_voucher_that_matches_an_item_name_is_flagged_not_missing(case_recorder, monkeypatch):
+    """The model can mistake a stock-item code for an invoice ref (e.g. "0028"
+    in "(0028) Gangwal Khaman Mix 500gm"). SA-3 grounds the ref against this
+    customer's real catalog: since "0028" isn't a voucher but does turn up in
+    a real item name, it should ask for the actual invoice number instead of
+    reporting a plain "not found", which reads like the customer cited a
+    fake/expired invoice rather than the item they meant."""
+    monkeypatch.setattr(
+        c3, "get_sales_history",
+        lambda cid: [{
+            "voucher_number": "URD/NE/500", "date": date(2024, 4, 16), "amount": 1200.0,
+            "items": [{"name": "(0028) Gangwal Khaman Mix 500gm"}],
+        }],
+    )
+    monkeypatch.setattr(c3, "get_receipts", lambda cid: [])
+    result = sa3.run(
+        _task("sa3_dispute", "dispute", entities={"voucher_numbers": ["0028"]}),
+        _state('I have not received "(0028) Gangwal Khaman Mix 500gm" from that invoice.'),
+    )
+    assert result.status == "needs_information"
+    assert "could not find" not in result.customer_message.lower()
+    assert "invoice/bill number" in result.customer_message.lower()
+    assert "Gangwal Khaman Mix" in result.customer_message
+
+
 def test_wrong_ledger_balance_dispute_with_no_voucher_cited_uses_outstanding(case_recorder, monkeypatch):
     """'Wrong ledger balance' names no specific invoice — the only evidence
     available is the current outstanding position."""
