@@ -540,7 +540,7 @@ EXTRACTION_RULES = (
 )
 
 
-def format_recent_history(conversation_id: str | None, max_messages: int = 6) -> str:
+def format_recent_history(conversation_id: str | None, max_messages: int = 20) -> str:
     """Format recent turns in this conversation as a compact transcript block
     to give the understanding model conversational context."""
     if not conversation_id:
