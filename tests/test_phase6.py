@@ -96,7 +96,8 @@ def test_dispute_over_a_real_invoice_states_what_is_on_record(case_recorder, mon
 
 def test_dispute_urgency_from_the_orchestrator_sets_case_priority(case_recorder, monkeypatch):
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
-    sa3.run(_task("sa3_dispute", "dispute"), _state("You billed me twice.", urgency="high"))
+    sa3.run(_task("sa3_dispute", "dispute"),
+            _state("The balance you're showing me looks wrong.", urgency="high"))
     cases, _ = case_recorder
     assert cases[0][1] == "high"
 
@@ -154,7 +155,8 @@ def test_multiple_cited_vouchers_each_get_their_own_evidence(case_recorder, monk
 
 def test_dispute_case_is_recorded_as_an_executed_auto_action(case_recorder, monkeypatch):
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
-    result = sa3.run(_task("sa3_dispute", "dispute"), _state("Something is wrong with my bill."))
+    result = sa3.run(_task("sa3_dispute", "dispute"),
+                     _state("The balance shown on my account is wrong."))
     action = next(a for a in result.actions if a.type == "create_dispute")
     assert action.mode == "auto" and action.executed is True
 
@@ -362,11 +364,25 @@ def test_orchestrator_routes_a_dispute_to_the_real_sa3(monkeypatch):
                         lambda cid, title, **kw: (Case(customer_id=cid, title=title), True))
     monkeypatch.setattr(services, "record_event", lambda *a, **kw: (None, True))
 
-    state = orc.handle("You have billed me twice for the same delivery.",
-                       customer_id=CID, message_id="MSG-D")
+    state = orc.handle("The balance you're showing me is wrong.", customer_id=CID, message_id="MSG-D")
     summary = orc.summarize(state)
     assert summary["agents"] == ["sa3_dispute"]
     assert "colleague will review" in state.final_response.lower()
+
+
+def test_orchestrator_routes_an_unspecific_dispute_to_a_clarifying_question(monkeypatch):
+    """The reported bug, end to end: a goods-condition complaint with no
+    invoice cited must ask for specifics, never answer with an unrelated
+    account figure."""
+    monkeypatch.setattr(c3, "build_customer_360", lambda cid, **kw: None)
+
+    state = orc.handle("I got damage stocks in last order", customer_id=CID, message_id="MSG-DMG")
+    summary = orc.summarize(state)
+    assert summary["agents"] == ["sa3_dispute"]
+    reply = state.final_response.lower()
+    assert "invoice number" in reply and "item" in reply
+    assert _figures(state.final_response) == set()  # no balance or any other figure invented
+    assert "CASE-" not in state.final_response  # nothing was actually opened yet
 
 
 def test_dispute_and_settlement_in_one_message_routes_to_both_agents(monkeypatch):

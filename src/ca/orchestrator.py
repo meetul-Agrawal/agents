@@ -98,7 +98,8 @@ INTENT_RULES: list[tuple[str, str, re.Pattern[str]]] = [
         r"|\bnew\s+order\b|\border\s+for\b", re.I)),
     ("dispute", "sa3_dispute", re.compile(
         r"\b(dispute|disagree|not\s+agree|wrong|incorrect|mismatch|overcharg|excess\s+charg|"
-        r"double\s+bill|duplicate\s+(invoice|bill)|short\s+(supply|shipped|supplied)|damaged|"
+        r"double\s+bill|duplicate\s+(invoice|bill)|short\s+(supply|shipped|supplied)|"
+        r"damage[ds]?|defective|spoil(ed|t)?|broken|leak(ing|ed)?|"
         r"(bill(ed)?|charg(ed|ing))\s+(me\s+)?twice|"
         r"not\s+received|never\s+received)\b", re.I)),
     ("call_prep", "sa8_call_prep", re.compile(

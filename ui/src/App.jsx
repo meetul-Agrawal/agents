@@ -151,7 +151,18 @@ function DisputeDetail({ case_, onResolved }) {
             {case_.evidence.map((e, i) => (
               <li key={i}>
                 {e.type === 'voucher_not_found' && <>Could not find {e.voucher_number} on the account.</>}
-                {e.type === 'invoice_on_record' && <>Invoice {e.voucher_number}: {inr(e.amount)} on {e.date}.</>}
+                {e.type === 'invoice_on_record' && (
+                  <>
+                    Invoice {e.voucher_number}: {inr(e.amount)} on {e.date}.
+                    {(e.items || []).length === 1 && <> Item: {e.items[0]}.</>}
+                    {(e.items || []).length > 1 && (e.matched_items || []).length === 1 && (
+                      <> Item: <strong>{e.matched_items[0]}</strong> (of {e.items.length} on this invoice).</>
+                    )}
+                    {(e.items || []).length > 1 && (e.matched_items || []).length !== 1 && (
+                      <> Multiple items on this invoice — unclear which: {e.items.join(', ')}.</>
+                    )}
+                  </>
+                )}
                 {e.type === 'receipt_on_record' && <>Receipt against {e.voucher_number}: {inr(e.amount)}.</>}
                 {e.type === 'outstanding_snapshot' && <>Outstanding: {inr(e.outstanding)} across {e.open_bill_count} invoice(s).</>}
                 {!['voucher_not_found', 'invoice_on_record', 'receipt_on_record', 'outstanding_snapshot'].includes(e.type) &&
