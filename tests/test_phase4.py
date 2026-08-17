@@ -11,8 +11,6 @@ import json
 import re
 from datetime import date
 
-import pytest
-
 from ca import customer360 as c3
 from ca import orchestrator as orc
 from ca import sa1_general as sa1
@@ -110,6 +108,23 @@ def test_settled_account_is_reported_plainly(monkeypatch):
     result = sa1.run(_task("outstanding_enquiry"), _state())
     assert "fully settled" in result.customer_message
     assert _figures(result.customer_message) == set()
+
+
+def test_outstanding_never_reports_the_net_balance_as_dues(monkeypatch):
+    """Regression: a customer whose receipts settle pre-book invoices has a
+    negative (apparently "in credit") net_balance while genuinely owing money
+    at the bill level — this is the real, measured shape of Aadinath Traders in
+    the tenant book. The customer-facing figure must be the bill-level one, and
+    the reply must never claim the account is "in credit"."""
+    contaminated = OUTSTANDING.model_copy(
+        update={"outstanding": 386114.0, "net_balance": -49458.0, "pre_book_settlements": 416519.0}
+    )
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: contaminated)
+    result = sa1.run(_task("outstanding_enquiry"), _state())
+    assert "386,114" in result.customer_message
+    assert "49,458" not in result.customer_message
+    assert "credit" not in result.customer_message.lower()
+    assert "fully settled" not in result.customer_message.lower()
 
 
 # --------------------------------------------------------------------------

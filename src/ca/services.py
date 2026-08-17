@@ -24,7 +24,7 @@ from datetime import date
 from typing import Any
 
 from .config import app_db
-from .contracts import Event, EventType, PaymentPromise, Task, utcnow
+from .contracts import Approval, Case, Event, EventType, PaymentPromise, Task, utcnow
 
 
 def _clean(doc: dict[str, Any]) -> dict[str, Any]:
@@ -143,6 +143,119 @@ def create_task(
         doc["_idempotency"] = key
     coll.insert_one(doc)
     return task, True
+
+
+def create_case(
+    customer_id: str,
+    title: str,
+    *,
+    type: str = "dispute",
+    priority: str = "normal",
+    evidence: list[dict[str, Any]] | None = None,
+    message_id: str | None = None,
+    db: Any | None = None,
+) -> tuple[Case, bool]:
+    """Open a dispute case. Idempotent on message_id: a replayed message
+    re-finds its own case rather than opening a second."""
+    db = db if db is not None else app_db()
+    coll = db["cases"]
+    key = f"case:{message_id}" if message_id else None
+
+    if key:
+        prior = coll.find_one({"_idempotency": key})
+        if prior:
+            return Case.model_validate(_clean(prior)), False
+
+    case = Case(
+        customer_id=customer_id, type=type, priority=priority, title=title,
+        evidence=evidence or [],
+    )
+    doc = case.model_dump(mode="json")
+    if key:
+        doc["_idempotency"] = key
+    coll.insert_one(doc)
+    return case, True
+
+
+def resolve_case(case_id: str, resolution: str, *, db: Any | None = None) -> Case | None:
+    """Close a case with its resolution.
+
+    ponytail: no human-workflow trigger yet — call this manually until Phase 11
+    wires an actual review queue. Phase 6 only needs cases to open correctly.
+    """
+    db = db if db is not None else app_db()
+    coll = db["cases"]
+    doc = coll.find_one({"case_id": case_id})
+    if not doc:
+        return None
+    case = Case.model_validate(_clean(doc)).model_copy(
+        update={"status": "resolved", "resolution": resolution, "updated_at": utcnow()}
+    )
+    coll.replace_one({"case_id": case_id}, case.model_dump(mode="json"))
+    return case
+
+
+def create_approval(
+    customer_id: str,
+    type: str,
+    requested_by: str,
+    *,
+    amount: float | None = None,
+    context: dict[str, Any] | None = None,
+    recommendation: str = "",
+    message_id: str | None = None,
+    db: Any | None = None,
+) -> tuple[Approval, bool]:
+    """Raise a pending approval request. Idempotent on message_id.
+
+    This never decides the outcome — status is always "pending" on creation.
+    `create_approval` is an auto-mode tool (registry.py): raising the request is
+    safe by design. Only `decide_approval` may move it off "pending", and that
+    is the one human_approval-mode boundary this whole module protects.
+    """
+    db = db if db is not None else app_db()
+    coll = db["approvals"]
+    key = f"approval:{message_id}" if message_id else None
+
+    if key:
+        prior = coll.find_one({"_idempotency": key})
+        if prior:
+            return Approval.model_validate(_clean(prior)), False
+
+    approval = Approval(
+        customer_id=customer_id, type=type, requested_by=requested_by,
+        amount=amount, context=context or {}, recommendation=recommendation,
+    )
+    doc = approval.model_dump(mode="json")
+    if key:
+        doc["_idempotency"] = key
+    coll.insert_one(doc)
+    return approval, True
+
+
+def decide_approval(
+    approval_id: str, approved: bool, decided_by: str, *, db: Any | None = None
+) -> Approval | None:
+    """Record a human's decision. The only place `Approval.status` can leave
+    "pending" — no agent calls this.
+
+    ponytail: no human-workflow trigger yet — call this manually until Phase 11
+    wires an actual approval queue.
+    """
+    db = db if db is not None else app_db()
+    coll = db["approvals"]
+    doc = coll.find_one({"approval_id": approval_id})
+    if not doc:
+        return None
+    approval = Approval.model_validate(_clean(doc)).model_copy(
+        update={
+            "status": "approved" if approved else "rejected",
+            "decided_by": decided_by,
+            "decided_at": utcnow(),
+        }
+    )
+    coll.replace_one({"approval_id": approval_id}, approval.model_dump(mode="json"))
+    return approval
 
 
 def is_missed(promise: PaymentPromise, as_of: date) -> bool:

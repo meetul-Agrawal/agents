@@ -89,21 +89,18 @@ def _outstanding(cid: str, entities: dict, message: str, calls: list[ToolCall]) 
     if o is None:
         return "I couldn't retrieve your balance just now; a colleague will follow up.", None
 
-    # The headline is the net balance — every receipt subtracted — not the gross
-    # sum of open invoices, which overstates when payments sit against other bills.
-    net = o.net_balance
-    if net <= 0.01:
-        if net < -0.01:
-            return f"{o.ledger_name} — account is in credit by {_inr(-net)}.", None
+    # The headline MUST be the bill-level figure (`o.outstanding`), never
+    # `o.net_balance`. net_balance is the raw ledger closing balance, and in this
+    # book that number is actively misleading: ~22% of receipts settle invoices
+    # from before this book started, so subtracting them from the current book's
+    # invoices makes genuine debtors look paid up or even in credit. Verified on
+    # real data — Aadinath Traders: net_balance says "credit of ₹49,458", the
+    # bill-level truth (cross-checked against an independent implementation) is
+    # "owes ₹386,114". See Docs and `customer360.compute_outstanding`.
+    if o.outstanding <= 0.01:
         return f"{o.ledger_name} — account is fully settled, nothing outstanding.", None
 
-    line = f"{o.ledger_name} — outstanding {_inr(net)} (net of all receipts received)."
-    # Only surface the invoice-level gross when it differs, and say why.
-    if o.open_bill_count and abs(o.outstanding - net) > 1:
-        line += (
-            f" At invoice level {o.open_bill_count} bill(s) are still unmatched, totalling "
-            f"{_inr(o.outstanding)}, because earlier payments were booked against other bills."
-        )
+    line = f"{o.ledger_name} — outstanding {_inr(o.outstanding)} across {o.open_bill_count} invoice(s)."
     if o.open_bills:
         line += "\nOldest open invoice(s):\n" + "\n".join(
             f"- {b.voucher_number} dated {_fmt_date(b.invoice_date)}: {_inr(b.outstanding)}"

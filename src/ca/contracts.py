@@ -168,13 +168,23 @@ class Outstanding(Contract):
     settle bills predating the book cannot be tied to an invoice — they are
     reported separately as `pre_book_settlements` rather than being netted off,
     which would understate the balance.
+
+    `outstanding` is what every customer-facing surface must show as "what you
+    owe" — it is the figure cross-checked against an independent implementation
+    (`scripts/gen_golden.js`). `net_balance` exists for internal reconciliation
+    only (it reproduces Tally's own ledger closing balance) and must NEVER be
+    phrased to a customer as their balance: in this book it is contaminated by
+    receipts settling pre-book invoices, which silently turns genuine debtors
+    into apparent credits. Measured on real data: net_balance says Aadinath
+    Traders is "in credit by ₹49,458"; they owe ₹386,114. Do not add a code path
+    that surfaces `net_balance` as a dues figure without re-reading this note.
     """
 
     customer_id: Id
     ledger_name: NonEmpty
     as_of: date
     outstanding: float  # gross: sum of open invoices after their Agst-Ref receipts
-    net_balance: float  # net: opening + invoiced - every receipt (however allocated)
+    net_balance: float  # DIAGNOSTIC ONLY — see class docstring. Never customer-facing.
     open_bill_count: int
     invoiced_total: float
     receipted_total: float

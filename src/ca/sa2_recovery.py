@@ -225,11 +225,15 @@ def _verify_claim(
     amount = _amount(entities)
     receipts = _read(calls, "get_receipts", lambda: c3.get_receipts(cid, limit=20), customer_id=cid, limit=20)
 
+    # No amount means nothing to verify against — confirming the first receipt
+    # in the list regardless of its contents is exactly the false-positive the
+    # adversarial "I paid" case exists to catch. Ask, do not guess.
     match = None
-    for row in receipts or []:
-        if amount is None or abs(float(row.get("amount") or 0) - amount) <= 1.0:
-            match = row
-            break
+    if amount is not None:
+        for row in receipts or []:
+            if abs(float(row.get("amount") or 0) - amount) <= 1.0:
+                match = row
+                break
 
     services.record_event(
         cid, "RECOVERY_CONTACTED", "sa2_recovery",

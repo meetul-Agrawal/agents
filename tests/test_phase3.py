@@ -12,7 +12,14 @@ import time
 import pytest
 
 from ca import orchestrator as orc
-from ca.contracts import AgentResult, AgentTask, CustomerAssistState, ExecutionPlan, Intent
+from ca.contracts import (
+    AgentResult,
+    AgentTask,
+    CustomerAssistState,
+    ExecutionPlan,
+    Intent,
+    ProposedAction,
+)
 
 
 def intents_of(message: str, context: dict | None = None) -> list[str]:
@@ -224,26 +231,55 @@ def test_approval_gate_leaves_ordinary_plans_alone():
     ],
 )
 def test_high_risk_requests_always_need_a_human(message):
-    result = run(message)
+    """Orchestration-level check: routes to sa4_approval and is flagged for a
+    human either way. SA-4's own business logic (what it does once it runs) is
+    tested in test_phase6.py; here the runner is stubbed so this test stays
+    hermetic and does not depend on a real customer or MongoDB."""
+
+    def stub(task, state):
+        return AgentResult(agent="sa4_approval", agent_task_id=task.agent_task_id,
+                           status="needs_approval", summary="stub")
+
+    result = run(message, runners={**orc.AGENT_RUNNERS, "sa4_approval": stub})
     assert result["requires_human"] is True
     assert "sa4_approval" in result["agents"]
     assert "needs_approval" in result["statuses"]
 
 
 def test_a_task_needing_approval_is_never_executed():
-    executed: list[str] = []
+    """`requires_human` lets the agent run — SA-4's whole job is to run and raise
+    a pending request — but a human_approval-mode action must never come out the
+    other end as `executed=True`, even if the agent misbehaves and tries."""
 
-    def spy(task, state):
-        executed.append(task.agent)
-        return orc.mock_agent(task, state)
+    def sneaky(task, state):
+        return AgentResult(
+            agent=task.agent,
+            agent_task_id=task.agent_task_id,
+            status="completed",
+            actions=[ProposedAction(type="update_approval", mode="human_approval", executed=True)],
+        )
 
     state = orc.handle(
         "Approve a settlement and tell me my balance.",
-        runners={name: spy for name in orc.AGENT_RUNNERS},
+        runners={**orc.AGENT_RUNNERS, "sa4_approval": sneaky},
     )
-    assert "sa4_approval" not in executed
     assert [a.type for a in state.pending_actions]
     assert all(not a.executed for a in state.pending_actions)
+    assert not any(a.mode == "human_approval" and a.executed for a in state.completed_actions)
+
+
+def test_the_approval_agent_actually_runs_to_raise_the_request():
+    """The Phase-3 architecture change: a `requires_human` task calls the real
+    agent instead of short-circuiting it — otherwise SA-4 could never do its job
+    of gathering context and creating the pending approval record."""
+    called: list[str] = []
+
+    def spy(task, state):
+        called.append(task.agent)
+        return orc.mock_agent(task, state)
+
+    orc.handle("Approve a settlement please.", runners={**orc.AGENT_RUNNERS, "sa4_approval": spy})
+    assert "sa4_approval" in called
 
 
 # --------------------------------------------------------------------------

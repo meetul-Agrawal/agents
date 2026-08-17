@@ -178,6 +178,21 @@ def test_unverifiable_payment_claim_is_not_confirmed(recorder, monkeypatch):
     assert "thank you" not in msg
 
 
+def test_claim_with_no_amount_does_not_confirm_an_unrelated_receipt(recorder, monkeypatch):
+    """Regression: 'I paid, please check' with no amount extracted must not
+    match the first receipt in the list regardless of what it is — that
+    confirms an unrelated old receipt as if it settled the claim."""
+    monkeypatch.setattr(
+        c3, "get_receipts",
+        lambda cid, limit=20: [{"voucher_number": "RCT/OLD", "date": date(2026, 1, 1), "amount": 999.0}],
+    )
+    result = sa2.run(_task("payment_claim", entities={}),
+                     _state("I already paid, please check my account."))
+    msg = result.customer_message.lower()
+    assert "could not" in msg and "reference" in msg
+    assert "rct/old" not in msg
+
+
 def test_matching_receipt_confirms_the_claim(recorder, monkeypatch):
     monkeypatch.setattr(
         c3, "get_receipts",

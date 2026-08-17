@@ -5,10 +5,11 @@ sf_tenant_6a33b5b2091da2fb4a7c3de4
 Agentic orchestration over Tally data in MongoDB. Vision: `Docs/01vision.md`.
 Roadmap and evaluation gates: `Docs/02phasesWithEval.md`.
 
-Status: **Phase 3 complete** — contracts frozen, evaluation foundation running,
+Status: **Phase 6 complete** — contracts frozen, evaluation foundation running,
 Customer 360 answering from real data, email/chat/webhook normalized onto one
-conversation model, and the orchestrator routing over mock agents. The eight
-real agents (SA-1 … SA-8) are still mocks.
+conversation model, the orchestrator routing with a real approval gate, and
+four real agents behind it: SA-1 (general/read-only), SA-2 (recovery), SA-3
+(dispute), SA-4 (approval). SA-5 … SA-8 are still mocks.
 
 ## Layout
 
@@ -19,6 +20,11 @@ src/ca/config.py        settings, read-only tenant DB guard, app DB handle
 src/ca/customer360.py   resolution, outstanding, ledger, timeline, Customer 360
 src/ca/inbox.py         email/chat/webhook parsing, threading, dedupe, ingestion
 src/ca/orchestrator.py  intent rules, planner, approval gate, LangGraph state machine
+src/ca/services.py      the write layer: idempotent promise/task/case/approval/event commits
+src/ca/sa1_general.py   SA-1 — read-only, grounded-reply general agent
+src/ca/sa2_recovery.py  SA-2 — payment promises, verified payment claims
+src/ca/sa3_dispute.py   SA-3 — evidence gathering, case opening
+src/ca/sa4_approval.py  SA-4 — approval-request context, recommendation, pending record
 src/ca/llm.py           LLM gateway: capability -> provider, structured output
 src/ca/data_quality.py  the book's data-quality checks
 src/ca/evals.py         dataset loader, graders, runner, report, regression
@@ -32,7 +38,7 @@ scripts/gen_golden.js   independent mongosh implementation that produces the gol
 
 ```bash
 uv sync
-uv run pytest                                  # 175 tests: unit, negative, live integration
+uv run pytest                                  # 300 tests: unit, negative, live integration
 uv run scripts/run_evals.py all                # routing + resolution + conversation + customer360
 uv run scripts/run_evals.py routing_llm        # same dataset, LLM classifier (costs tokens)
 uv run scripts/run_evals.py all --accept       # store new baselines
@@ -57,6 +63,17 @@ book has no due dates, so nothing is described as "overdue".
 The golden values in `evals/datasets/customer360/` are produced by
 `scripts/gen_golden.js`, a separately written mongosh implementation of the same
 rules. The suite passes only when two independent implementations agree.
+
+`Outstanding` also carries `net_balance` — the raw ledger closing balance
+(opening + invoiced − every receipt, however allocated). It is diagnostic only
+and **must never be shown to a customer as their balance**: in this book it is
+contaminated by receipts settling pre-book invoices, so it can show a genuine
+debtor as "in credit". Measured: for Aadinath Traders `net_balance` says
+"credit of ₹49,458" while the bill-level truth is "owes ₹386,114". Every
+customer-facing surface (SA-1, SA-3, SA-4) reads `outstanding`, never
+`net_balance` — see the docstring on `Outstanding` in `contracts.py` and
+`test_outstanding_never_reports_the_net_balance_as_dues` in `test_phase4.py`
+before adding a new one that doesn't.
 
 ## Data rules
 
@@ -119,14 +136,58 @@ state = orchestrator.handle("I want to return 20 pieces from URD/NE/327.",
 
 Two rules the graph enforces rather than trusting agents with:
 
-- **A task marked `requires_human` is never executed.** It becomes a pending
-  action and the run reports `needs_approval`. `enforce_approval_gate` decides
-  this from the *message text*, not from the classifier, so a model that misreads
-  "write off my balance" as a payment promise still cannot route around it.
+- **`requires_human` gates execution, not the agent running.** Early on this
+  meant "skip the agent entirely" — but SA-4's whole job is to run, gather
+  context and raise a *pending* approval record, which is itself an auto-mode
+  action (`registry.py`). So the agent always runs; what `execute()` actually
+  neutralises is any action the agent marks `executed=True` under a
+  `human_approval`-mode tool. `enforce_approval_gate` still decides *whether*
+  a task needs a human from the raw message text, not the classifier, so a
+  model that misreads "write off my balance" as a payment promise still cannot
+  route around it.
 - **A broken agent cannot break the run.** Raising, timing out, returning the
   wrong type, or claiming to be a different agent all become a `failed`
   `AgentResult`. The reply then says one part could not be completed instead of
   quietly looking successful.
+
+## The agents
+
+**SA-1 (general, read-only)** answers from the Phase 1 tools only — never a
+number the tools didn't return. An optional LLM pass rewords the finished
+template; the rewrite is checked against the template (`_grounded`) and
+rejected unless every figure and voucher in it already appears there
+unchanged. Refuses cross-customer requests before reading anything.
+
+**SA-2 (recovery)** records payment promises and verifies payment claims
+against real receipts — never thanks a customer for a payment it cannot find.
+The amount is the orchestrator's already-verified figure (no second,
+possibly-disagreeing extraction); the due date is parsed deterministically
+(`parse_due_date`), not guessed by a model. A claim with no amount is never
+matched against just the first receipt on file — that would confirm an
+unrelated payment (`test_claim_with_no_amount_does_not_confirm_an_unrelated_receipt`).
+
+**SA-3 (dispute)** gathers evidence from the same read tools SA-1 uses — a
+cited invoice's real figures, or the fact that it does not exist on the
+account at all — and opens a case. It states what the records show and never
+who is at fault; determining that is a human's job.
+
+**SA-4 (approval)** gathers context (outstanding, settlement speed, prior
+approvals) and raises a *pending* approval request with a grounded
+recommendation. It can never approve or execute anything itself:
+`services.create_approval` always writes `status="pending"`, and the only
+function that can change that (`services.decide_approval`) is never called
+from agent code. `create_approval` is an auto-mode tool; `update_approval` is
+human_approval-mode and appears nowhere in SA-4.
+
+Both SA-2 and SA-3/SA-4 write through `services.py`, which is idempotent on
+`message_id`: a replayed message re-finds its own promise/case/approval
+instead of creating a second.
+
+Note for anyone testing agents live: `db=` passed to `orchestrator.handle()`
+only affects `update_state()`'s own write — it is **not** threaded into the
+`services.*` calls each agent makes internally. A live call always writes to
+the real `app_db()` unless you monkeypatch `services` directly, which is what
+every test in `test_phase5.py`/`test_phase6.py` does.
 
 ### One structured reading per message
 
@@ -197,6 +258,6 @@ a query matches more than one customer.
 
 ## Next
 
-Phase 4 — SA-1 General Agent: replace the first mock in
-`orchestrator.AGENT_RUNNERS` with a real read-only agent over the Phase 1 tools,
-graded for factuality and grounding.
+Phase 7 — SA-5 Order Capture + SA-6 Sales Return: transactional agents where
+price, discount and eligibility must come from deterministic services, never
+an LLM.

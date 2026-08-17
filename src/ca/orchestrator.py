@@ -807,11 +807,13 @@ def mock_agent(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
 
 # Real agents replace entries here as each phase lands.
-from . import sa1_general, sa2_recovery
+from . import sa1_general, sa2_recovery, sa3_dispute, sa4_approval
 
 AGENT_RUNNERS: dict[str, AgentRunner] = {name: mock_agent for name in AGENT_NAMES}
 AGENT_RUNNERS["sa1_general"] = sa1_general.run
 AGENT_RUNNERS["sa2_recovery"] = sa2_recovery.run
+AGENT_RUNNERS["sa3_dispute"] = sa3_dispute.run
+AGENT_RUNNERS["sa4_approval"] = sa4_approval.run
 
 
 def run_agent(
@@ -982,27 +984,26 @@ def execute(state: CustomerAssistState, config: RunnableConfig = None) -> dict[s
     completed: list[ProposedAction] = []
 
     for task in (state.execution_plan.tasks if state.execution_plan else []):
-        if task.requires_human:
-            # The approval gateway: propose, never execute.
-            pending.append(
-                ProposedAction(
-                    type=task.action,
-                    mode="human_approval",
-                    payload={"agent": task.agent, "inputs": task.inputs},
-                    executed=False,
-                )
-            )
-            results.append(
-                AgentResult(
-                    agent=task.agent,
-                    agent_task_id=task.agent_task_id,
-                    status="needs_approval",
-                    summary=f"{task.action} requires human approval",
-                )
-            )
-            continue
-
         result = run_agent(task, state, runners=runners, timeout=timeout)
+
+        if task.requires_human:
+            # `requires_human` means the topic this task is working on needs a
+            # human decision before anything irreversible happens — it does not
+            # mean the agent must not run at all. SA-4's whole job is to run:
+            # gather context and raise a *pending* approval request, which is
+            # itself an "auto"-mode action (see registry.py). What must never
+            # happen without a human is executing a human_approval-mode tool
+            # (e.g. actually applying a settlement) — so that is what gets
+            # neutralised here, defense-in-depth alongside `review()` below,
+            # rather than the agent being skipped outright.
+            safe_actions = [
+                a.model_copy(update={"executed": False}) if a.mode == "human_approval" and a.executed else a
+                for a in result.actions
+            ]
+            result = result.model_copy(update={"actions": safe_actions})
+            if result.status == "completed":
+                result = result.model_copy(update={"status": "needs_approval"})
+
         results.append(result)
         for action in result.actions:
             (completed if action.executed else pending).append(action)
@@ -1056,11 +1057,16 @@ def respond(state: CustomerAssistState, config: RunnableConfig = None) -> dict[s
 
     parts = [r.customer_message for r in state.agent_results if r.customer_message]
     failed = [r for r in state.agent_results if r.status == "failed"]
-    awaiting = [r for r in state.agent_results if r.status == "needs_approval"]
+    # Only results that stayed silent get the generic notice — a real agent
+    # (SA-4) already speaks for itself above, and appending this on top would
+    # duplicate its grounded reply with boilerplate.
+    awaiting_silent = [
+        r for r in state.agent_results if r.status == "needs_approval" and not r.customer_message
+    ]
 
     if not parts:
         parts = [r.summary for r in state.agent_results if r.status == "completed" and r.summary]
-    if awaiting:
+    if awaiting_silent:
         parts.append(
             "One part of your request needs internal approval. We have raised it and "
             "will come back to you."
