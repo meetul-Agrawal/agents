@@ -1,1 +1,10 @@
+Windows:
+```
 .venv\Scripts\uvicorn scripts.ui_server:app --reload
+```
+
+iOS:
+```
+source .venv/bin/activate
+uvicorn scripts.ui_server:app --reload
+```
