@@ -125,6 +125,24 @@ def parse_due_date(text: str, today: date) -> date | None:
             return _roll(date(today.year, month, day), today)
         except ValueError:
             return None
+
+    # A bare day-of-month with no month named ("by the 23rd") means the next
+    # such date in the current or following month.
+    m = re.search(r"\bby\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b", t)
+    if m:
+        day = int(m.group(1))
+        try:
+            candidate = date(today.year, today.month, day)
+        except ValueError:
+            return None
+        if candidate < today:
+            next_month = today.month % 12 + 1
+            next_year = today.year + (today.month == 12)
+            try:
+                candidate = date(next_year, next_month, day)
+            except ValueError:
+                return None
+        return candidate
     return None
 
 
@@ -155,6 +173,32 @@ def _add_task(
     ))
 
 
+def _fill_from_open_promise(
+    cid: str, meta: dict, amount: float | None, due: date | None, calls: list[ToolCall],
+) -> tuple[float | None, date | None]:
+    """A turn that only answers the half of the promise still missing ("by the
+    23rd") carries no amount of its own — the amount lives in the message that
+    started the promise. Recover the missing half from the customer's own last
+    incomplete-promise event, so answering the question we asked doesn't reset it."""
+    if amount is not None and due is not None:
+        return amount, due
+    events = _read(calls, "get_events", lambda: c3.get_events(cid, limit=10), customer_id=cid, limit=10)
+    for event in events or []:
+        if event.get("type") != "RECOVERY_CONTACTED":
+            continue
+        payload = event.get("payload") or {}
+        if payload.get("outcome") != "incomplete_promise":
+            continue
+        if event.get("conversation_id") != meta.get("conversation_id"):
+            continue
+        if amount is None and payload.get("amount") is not None:
+            amount = payload["amount"]
+        if due is None and payload.get("due_date"):
+            due = date.fromisoformat(payload["due_date"])
+        break
+    return amount, due
+
+
 def _handle_promise(
     cid: str, entities: dict, message: str, meta: dict,
     calls: list[ToolCall], actions: list[ProposedAction],
@@ -178,10 +222,17 @@ def _handle_promise(
     due = parse_due_date(message, utcnow().date())
 
     if amount is None or due is None:
+        amount, due = _fill_from_open_promise(cid, meta, amount, due, calls)
+
+    if amount is None or due is None:
         services.record_event(
             cid, "RECOVERY_CONTACTED", "sa2_recovery",
             conversation_id=meta["conversation_id"], message_id=meta["message_id"],
-            payload={"outcome": "incomplete_promise"},
+            payload={
+                "outcome": "incomplete_promise",
+                "amount": amount,
+                "due_date": due.isoformat() if due else None,
+            },
         )
         calls.append(ToolCall(tool="create_event"))
         if amount is not None:
