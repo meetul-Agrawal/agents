@@ -162,8 +162,8 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "sales_history_enquiry": IntentSpec(
         agent="sa1_general",
-        means="wants the record of what they have bought in the past, or the price "
-              "or rate last charged for a product they bought",
+        means="asks what is the price, rate, cost, or bhav of a product, or wants the record of what they bought in the past",
+        not_when="they are asking to place an order or buy goods",
     ),
     "payment_promise": IntentSpec(
         agent="sa2_recovery",
@@ -174,19 +174,16 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "payment_claim": IntentSpec(
         agent="sa2_recovery",
-        means="says a payment has already been set in motion and expects it to be "
-              "found and applied. It counts whether the money has landed or is still "
-              "in transit, and whatever carries it — transfer, cheque, draft, cash or "
-              "instrument sent by hand. Asking for the account to be updated once it "
-              "arrives is part of the same claim",
-        not_when="nothing has been sent yet and they are only undertaking to pay",
+        means="says an actual money payment or transfer has already been sent (transfer, cheque, draft, cash, UPI) "
+              "and expects it to be found and applied",
+        not_when="nothing has been sent yet, or they are asking for a balance write-off, waiver or settlement",
     ),
     "dispute": IntentSpec(
         agent="sa3_dispute",
         means="asserts the record or the delivery is wrong and wants it corrected. "
               "This covers what was charged (price, tax, a charge never agreed, a "
               "duplicated entry, an amount booked against the wrong account) and what "
-              "arrived (less than was billed, nothing at all, or goods damaged, "
+              "arrived (less than was billed, short supply, missing items, nothing at all, or goods damaged, "
               "defective or not what was ordered), and the account balance or ledger "
               "figure itself if they say it is wrong rather than merely asking what it "
               "is. A shortfall between what was invoiced and what was received is "
@@ -203,21 +200,15 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "order_capture": IntentSpec(
         agent="sa5_order",
-        means="wants goods supplied. Covers the whole life of an order before it is "
-              "delivered: placing a new one, repeating a previous one, adding to or "
-              "amending a pending one, cancelling one, and asking whether stock can "
-              "be supplied",
-        not_when="goods already delivered are being sent back, or they are only "
-                 "asking a product price, rate or availability rather than asking "
-                 "for it to be supplied",
+        means="wants standard goods supplied at standard rates. Covers placing a standard order, repeating an order, or asking to supply goods",
+        not_when="they are asking for a special price, discount, or pricing concession (that is settlement_request), or asking a product rate",
     ),
     "settlement_request": IntentSpec(
         agent="sa4_approval",
-        means="asks the business to give up money it is owed or to relax a commercial "
-              "limit — waiving interest or charges, reducing or clearing a balance, "
-              "raising a credit limit, extending payment terms, or pricing outside the "
-              "normal schedule. Always needs human authority",
-        not_when="they are simply paying, or asking what they owe",
+        means="asks for a special price, discount, or pricing concession on an order, "
+              "writing off/clearing a balance, waiving interest or charges, raising credit limits, or extending payment terms. "
+              "Always needs human authority",
+        not_when="they are reporting an actual completed transfer/payment, or asking what they owe",
     ),
     "credit_note_request": IntentSpec(
         agent="sa4_approval",
@@ -466,7 +457,7 @@ def _clause_grounded(clause: str, message: str) -> bool:
     an intent or any entity, model-provided fields (`about_balance`,
     `issue_label`, ...) included.
     """
-    words = {w for w in re.findall(r"[a-z0-9]+", (clause or "").lower()) if len(w) > 2}
+    words = {w for w in re.findall(r"[a-z0-9]+", re.sub(r"</?customer_inbound_message>", "", clause or "", flags=re.I).lower()) if len(w) > 2}
     if not words:
         return True  # nothing to check — do not punish an empty clause
     msg_words = set(re.findall(r"[a-z0-9]+", (message or "").lower()))

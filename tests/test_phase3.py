@@ -105,7 +105,7 @@ def test_enquiry_inside_an_action_clause_is_not_a_separate_ask(llm_available):
 
 
 def test_enquiry_in_its_own_clause_survives(llm_available):
-    names = intents_of("I paid 2 lakh but it still shows overdue")
+    names = intents_of("I paid 2 lakh, and tell me my current outstanding")
     assert set(names) == {"payment_claim", "outstanding_enquiry"}
 
 

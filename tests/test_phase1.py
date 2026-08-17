@@ -458,3 +458,38 @@ def test_data_quality_report_runs_and_is_typed(live):
     by_name = {f.check: f for f in findings}
     # Known and accepted: receipts settling bills that predate this book.
     assert by_name["receipt_against_unknown_invoice"].count > 0
+
+
+def test_sales_history_date_resolution():
+    from datetime import date
+    from ca.customer360 import _resolve_date_range
+
+    ref = date(2026, 4, 25)
+    assert _resolve_date_range("all_time", None, None, reference_date=ref) == (None, None)
+    assert _resolve_date_range("last_30_days", None, None, reference_date=ref) == (date(2026, 3, 26), ref)
+    assert _resolve_date_range("last_3_months", None, None, reference_date=ref) == (date(2026, 1, 25), ref)
+    assert _resolve_date_range("this_month", None, None, reference_date=ref) == (date(2026, 4, 1), ref)
+    assert _resolve_date_range("fy_25_26", None, None, reference_date=ref) == (date(2025, 4, 1), date(2026, 3, 31))
+
+
+def test_sales_history_query_filtering(live):
+    from ca.contracts import SalesHistoryQuery
+    from ca.customer360 import query_sales_history
+
+    cid = "6a6464a19f707bd30403790f"
+    q_rate = SalesHistoryQuery(item_query="Sattu Aata", metric="rate", limit=1)
+    res_rate = query_sales_history(cid, q_rate)
+    assert res_rate["found"] is True
+    assert "Sattu Aata" in res_rate["item_matched"]
+    assert res_rate["latest_rate"] is not None
+
+    q_multi = SalesHistoryQuery(item_query="Sattu Aata", metric="all", limit=3)
+    res_multi = query_sales_history(cid, q_multi)
+    assert res_multi["found"] is True
+    assert len(res_multi["records"]) <= 3
+
+    q_inv = SalesHistoryQuery(period="all_time", metric="invoices", limit=5)
+    res_inv = query_sales_history(cid, q_inv)
+    assert res_inv["found"] is True
+    assert len(res_inv["records"]) <= 5
+

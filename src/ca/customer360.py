@@ -23,7 +23,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Iterable
 
 from .config import CUSTOMER_GROUP_PATH_RE, app_db, tenant_db
@@ -35,9 +35,11 @@ from .contracts import (
     OpenBill,
     Outstanding,
     PaymentBehaviour,
+    SalesHistoryQuery,
     TimelineEvent,
     utcnow,
 )
+from .llm import LLMUnavailable, complete_structured
 
 # Vouchers that do not post to the books.
 _POSTING = {"flags.isCancelled": False, "flags.isDeleted": False, "flags.isOptional": False}
@@ -426,6 +428,192 @@ def get_sales_history(customer_id: str, *, limit: int | None = None) -> list[dic
     rows = [_voucher_summary(v, vs.ledger_name) for v in vs.sales]
     rows.reverse()  # newest first
     return rows[:limit] if limit else rows
+
+
+SALES_HISTORY_SYSTEM_PROMPT = (
+    "You parse customer enquiries about their sales and purchase history for a "
+    "B2B receivables and sales desk.\n\n"
+    "### Extraction Rules:\n"
+    "1. item_query: Product or SKU name (e.g. 'Sattu Aata', 'Khaman Mix', 'Poha'). "
+    "Omit non-product words like 'price', 'rate', 'latest', 'bill', 'order'.\n"
+    "2. voucher_number: Exact invoice or bill number if referenced (e.g. 'Blk/RD/26-27/149').\n"
+    "3. metric: 'rate' (asking for price/rate), 'quantity' (asking for units/volume), "
+    "'invoices' (asking for bills/invoice list), or 'all' (general history).\n"
+    "4. period: 'all_time', 'last_30_days', 'last_3_months', 'last_6_months', 'this_month', 'last_month', "
+    "'this_year', 'last_year', or financial year (e.g. 'fy_25_26', 'fy_26_27').\n"
+    "5. limit: Number of orders/invoices requested (e.g. 1 for 'latest/last rate', 3 for 'last 3 invoices', 5 for 'last 5'). Omit if not specified.\n"
+    "6. start_date / end_date: Specific YYYY-MM-DD dates if an explicit date range was stated."
+)
+
+
+def parse_sales_history_query(
+    message: str,
+    history: str = "",
+    reference_date: date | None = None,
+) -> SalesHistoryQuery:
+    today = reference_date or utcnow().date()
+    parts = []
+    if history.strip():
+        parts.append(
+            "<recent_conversation_history>\n"
+            f"{history.strip()}\n"
+            "</recent_conversation_history>\n"
+        )
+    parts.append(
+        f"Today's date is: {today.isoformat()}\n\n"
+        f"<customer_inbound_message>\n{message}\n</customer_inbound_message>\n\n"
+        "Extract the sales history query parameters."
+    )
+    try:
+        return complete_structured(
+            SalesHistoryQuery,
+            SALES_HISTORY_SYSTEM_PROMPT,
+            "\n".join(parts),
+            capability="structured_completion",
+            example={
+                "item_query": "Sattu Aata 500gm",
+                "voucher_number": None,
+                "start_date": None,
+                "end_date": None,
+                "period": "last_3_months",
+                "limit": 3,
+                "metric": "rate",
+            },
+        )
+    except Exception:
+        return SalesHistoryQuery()
+
+
+def _resolve_date_range(
+    period: str | None,
+    start: date | None,
+    end: date | None,
+    reference_date: date | None = None,
+) -> tuple[date | None, date | None]:
+    ref = reference_date or utcnow().date()
+    if start or end:
+        return start, end
+    p = (period or "all_time").lower().strip()
+    if p in ("all_time", "all", ""):
+        return None, None
+    if p in ("last_30_days", "last_month", "past_month"):
+        return ref - timedelta(days=30), ref
+    if p in ("last_3_months", "last_quarter", "past_3_months"):
+        return ref - timedelta(days=90), ref
+    if p in ("last_6_months", "past_6_months"):
+        return ref - timedelta(days=180), ref
+    if p in ("last_year", "past_year", "last_12_months"):
+        return ref - timedelta(days=365), ref
+    if p == "this_month":
+        return date(ref.year, ref.month, 1), ref
+    if p == "this_year":
+        return date(ref.year, 1, 1), ref
+    fy_match = re.search(r"(\d{2,4})[-_](\d{2,4})", p)
+    if fy_match:
+        y1 = int(fy_match.group(1))
+        if y1 < 100:
+            y1 += 2000
+        return date(y1, 4, 1), date(y1 + 1, 3, 31)
+    return None, None
+
+
+def _sig_tokens(text: str) -> set[str]:
+    return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) >= 2}
+
+
+def query_sales_history(
+    customer_id: str,
+    query: SalesHistoryQuery | None = None,
+    *,
+    reference_date: date | None = None,
+) -> dict[str, Any]:
+    """Execute a structured sales history query against the customer's sales vouchers."""
+    q = query or SalesHistoryQuery()
+    customer = get_customer(customer_id)
+    vs = fetch_vouchers(customer.ledger_name)
+    all_rows = [_voucher_summary(v, vs.ledger_name) for v in vs.sales]
+    all_rows.reverse()  # newest first
+
+    start_d, end_d = _resolve_date_range(q.period, q.start_date, q.end_date, reference_date)
+
+    # 1. Date filter
+    filtered_rows = []
+    for r in all_rows:
+        vdate = r.get("date")
+        if vdate:
+            if start_d and vdate < start_d:
+                continue
+            if end_d and vdate > end_d:
+                continue
+        filtered_rows.append(r)
+
+    # 2. Voucher number filter if specified
+    if q.voucher_number:
+        v_upper = q.voucher_number.upper()
+        filtered_rows = [r for r in filtered_rows if (r.get("voucher_number") or "").upper() == v_upper]
+
+    # 3. Item filtering & matching if specified
+    if q.item_query and q.item_query.strip():
+        want = _sig_tokens(q.item_query)
+        all_item_names = set(it["name"] for r in all_rows for it in (r.get("items") or []) if it.get("name"))
+        scored = [(len(_sig_tokens(name) & want), name) for name in all_item_names]
+        scored = [(s, name) for s, name in scored if s > 0]
+        if not scored:
+            return {
+                "customer_id": customer_id,
+                "customer_name": customer.display_name,
+                "found": False,
+                "item_matched": None,
+                "message": f"Could not find any purchases matching '{q.item_query}'.",
+                "records": [],
+            }
+
+        best_score = max(s for s, _ in scored)
+        best_matches = [name for s, name in scored if s == best_score]
+        matched_item = best_matches[0]
+
+        item_lines = []
+        for r in filtered_rows:
+            for it in (r.get("items") or []):
+                if it.get("name") == matched_item:
+                    item_lines.append({
+                        "voucher_number": r.get("voucher_number"),
+                        "date": r.get("date"),
+                        "qty": it.get("qty"),
+                        "rate": it.get("rate"),
+                        "amount": it.get("amount"),
+                    })
+
+        limited_lines = item_lines[:q.limit] if q.limit else item_lines
+        latest = item_lines[0] if item_lines else None
+        return {
+            "customer_id": customer_id,
+            "customer_name": customer.display_name,
+            "found": True,
+            "query_metric": q.metric,
+            "item_matched": matched_item,
+            "total_purchases": len(item_lines),
+            "latest_rate": latest.get("rate") if latest else None,
+            "latest_date": latest.get("date") if latest else None,
+            "latest_voucher": latest.get("voucher_number") if latest else None,
+            "records": limited_lines,
+        }
+
+    # 4. General invoice list
+    limited_rows = filtered_rows[:q.limit] if q.limit else filtered_rows
+    total_amount = round(sum(r.get("amount") or 0.0 for r in filtered_rows), 2)
+    return {
+        "customer_id": customer_id,
+        "customer_name": customer.display_name,
+        "found": True,
+        "query_metric": q.metric,
+        "total_invoices": len(filtered_rows),
+        "total_invoiced_amount": total_amount,
+        "start_date": start_d,
+        "end_date": end_d,
+        "period": q.period,
+        "records": limited_rows,
+    }
 
 
 def get_receipts(customer_id: str, *, limit: int | None = None) -> list[dict[str, Any]]:

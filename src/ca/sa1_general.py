@@ -48,6 +48,24 @@ def _inr(amount: float) -> str:
     return f"₹{amount:,.2f}"
 
 
+def _format_rate(rate_val: Any) -> str:
+    if rate_val is None:
+        return ""
+    if isinstance(rate_val, (int, float)):
+        return _inr(float(rate_val))
+    rate_str = str(rate_val).strip()
+    if "/" in rate_str:
+        num_part, unit_part = rate_str.split("/", 1)
+        try:
+            return f"{_inr(float(num_part.strip()))}/{unit_part.strip()}"
+        except Exception:
+            return rate_str
+    try:
+        return _inr(float(rate_str))
+    except Exception:
+        return rate_str
+
+
 def _fmt_date(value: Any) -> str:
     return value.strftime("%d %b %Y") if isinstance(value, date) else str(value or "")
 
@@ -202,7 +220,7 @@ def _sales(cid: str, entities: dict, message: str, calls: list[ToolCall]) -> tup
                 None,
             )
         return (
-            f"The last recorded price of {name} was {_inr(float(occ['rate']))} per unit "
+            f"The last recorded price of {name} was {_format_rate(occ['rate'])} per unit "
             f"(invoice {occ['voucher']} dated {_fmt_date(occ['date'])}).",
             None,
         )

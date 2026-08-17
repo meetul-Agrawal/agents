@@ -399,6 +399,14 @@ def test_tool_results_are_json_serialisable():
 
 
 def test_orchestrator_routes_outstanding_to_the_real_sa1(monkeypatch):
+    from ca.contracts import Request, Understanding
+
+    monkeypatch.setattr(
+        orc, "understand",
+        lambda *a, **kw: Understanding(requests=[
+            Request(intent="outstanding_enquiry", confidence=1.0, clause="How much do I owe?")
+        ]),
+    )
     monkeypatch.setattr(c3, "build_customer_360", lambda cid, **kw: None)
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: OUTSTANDING)
     state = orc.handle("How much do I owe?", customer_id=CID)

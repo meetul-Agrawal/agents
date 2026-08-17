@@ -218,6 +218,18 @@ class PaymentBehaviour(Contract):
     settled_bill_count: int = 0
 
 
+class SalesHistoryQuery(Contract):
+    """Normalized query parameters for sales/purchase history requests."""
+
+    item_query: str | None = None
+    voucher_number: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    period: str = "all_time"
+    limit: int | None = None
+    metric: Literal["rate", "quantity", "invoices", "all"] = "all"
+
+
 class DataCapability(Contract):
     """What this tenant's book can and cannot answer. Guards every agent from
     promising data that does not exist."""
