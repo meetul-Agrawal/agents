@@ -121,7 +121,7 @@ function DisputeDetail({ case_, onResolved }) {
     setBusy(true)
     try {
       const res = await api.post(`/api/disputes/${case_.case_id}/resolve`, {
-        outcome, resolution: note, note: '',
+        outcome, resolution: note, note,
       })
       if (res.ok) { setSent(res); onResolved() }
     } finally {
@@ -414,6 +414,13 @@ export default function App() {
       setSelDispute(cur => cur && rows.find(r => r.case_id === cur.case_id) || null)
     }).catch(() => {})
   }
+  // A decision/resolution sends its reply straight into a conversation, not
+  // necessarily the one open right now — refetch so it shows without the
+  // customer having to click away and back.
+  function refreshMessages() {
+    if (!activeConv) return
+    api.get(`/api/conversations/${activeConv.conversation_id}`).then(setMessages).catch(() => {})
+  }
 
   useEffect(() => {
     api.get('/api/customers').then(setCustomers).catch(() => {})
@@ -586,9 +593,9 @@ export default function App() {
         </div>
 
         {leftTab === 'approvals' ? (
-          <ApprovalDetail approval={selApproval} onDecided={refreshApprovals} />
+          <ApprovalDetail approval={selApproval} onDecided={() => { refreshApprovals(); refreshMessages() }} />
         ) : leftTab === 'disputes' ? (
-          <DisputeDetail case_={selDispute} onResolved={refreshDisputes} />
+          <DisputeDetail case_={selDispute} onResolved={() => { refreshDisputes(); refreshMessages() }} />
         ) : !activeConv ? (
           <div className="no-thread">← Select a thread or click + New Thread</div>
         ) : (

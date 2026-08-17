@@ -285,9 +285,14 @@ def resolution_message(case: Case, outcome: str, note: str = "") -> str:
     that already came from `services.resolve_case` — never phrased by the
     model. See `compose_grounded`'s docstring: this model measurably states
     the opposite decision inside an otherwise-correct reply, so the one fact
-    that must never be wrong is not entrusted to free text. Any `note` is
-    elaborated by the model and grounding-checked; it is shown no outcome
-    fact, so it has nothing to contradict."""
+    that must never be wrong is not entrusted to free text.
+
+    `note` is ops' own words for the customer — appended verbatim, not run
+    through the model. Measured `compose_grounded` silently replacing a
+    substantive note ("more than 30 days, can't refund") with vague filler
+    ("we appreciate your patience") — `_grounded` only blocks a new *number*,
+    it does not check the note's content survived, so a paraphrase step here
+    has a real chance of deleting the actual reason ops wrote."""
     if outcome == "solved":
         anchor = f"Update on your case {case.case_id} ({case.title}): this has been resolved."
     else:
@@ -295,12 +300,4 @@ def resolution_message(case: Case, outcome: str, note: str = "") -> str:
             f"Update on your case {case.case_id} ({case.title}): after review, we found no "
             "further action is needed."
         )
-    if not note:
-        return anchor
-    extra = compose_grounded(
-        "Write one short, warm closing sentence for a customer message, "
-        "incorporating this note. Do not restate or imply the case's "
-        "outcome — that has already been said elsewhere in the message.",
-        {"note": note},
-    )
-    return f"{anchor} {extra}" if extra else f"{anchor} {note}"
+    return f"{anchor} {note}" if note else anchor
