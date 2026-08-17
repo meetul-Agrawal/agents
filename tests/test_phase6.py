@@ -74,36 +74,24 @@ def case_recorder(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# Dispute classification — model-provided, regex only as the offline fallback
+# Dispute classification — model-provided only, no pattern list anywhere
 # --------------------------------------------------------------------------
 
 
-def test_dispute_signal_prefers_the_model_entity_over_any_keyword_check():
-    """A message with no balance keyword, but the model says about_balance —
-    the model wins; there is no pattern list to overrule it."""
+def test_dispute_signal_reads_the_model_entity():
+    """There is no pattern list to overrule the model's own classification."""
     about_balance, label = sa3._dispute_signal(
         {"dispute_about_balance": True, "dispute_issue": "the ledger looks off"},
-        "something feels wrong with my account",
     )
     assert about_balance is True and label == "the ledger looks off"
 
 
-def test_dispute_signal_falls_back_to_keywords_only_when_the_model_did_not_run():
-    """No `dispute_about_balance` key at all — this is the classify_rules path
-    (no LLM configured), and the only thing preserved offline is the balance
-    distinction; no issue label is invented."""
-    about_balance, label = sa3._dispute_signal({}, "the balance on my account is wrong")
-    assert about_balance is True and label is None
-
-    about_balance, label = sa3._dispute_signal({}, "the goods arrived broken")
+def test_dispute_signal_defaults_to_not_about_balance_when_no_model_ran():
+    """No `dispute_about_balance` key at all — the classify_rules path (no LLM
+    configured) has no classification to read. The safe default is False: it
+    routes `run()` to ask for specifics rather than guess evidence."""
+    about_balance, label = sa3._dispute_signal({})
     assert about_balance is False and label is None
-
-
-def test_dispute_signal_offline_fallback_covers_infinite_wording_only_via_balance_keyword():
-    """Anything that is not recognisably about the balance defaults to asking
-    for specifics offline — safe in every case, since it never dumps a figure."""
-    about_balance, _ = sa3._dispute_signal({}, "there was a problem with what I received")
-    assert about_balance is False
 
 
 def test_dispute_over_a_real_invoice_states_what_is_on_record(case_recorder, monkeypatch):
@@ -129,7 +117,7 @@ def test_dispute_over_a_real_invoice_states_what_is_on_record(case_recorder, mon
 
 def test_dispute_urgency_from_the_orchestrator_sets_case_priority(case_recorder, monkeypatch):
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
-    sa3.run(_task("sa3_dispute", "dispute"),
+    sa3.run(_task("sa3_dispute", "dispute", entities={"dispute_about_balance": True}),
             _state("The balance you're showing me looks wrong.", urgency="high"))
     cases, _ = case_recorder
     assert cases[0][1] == "high"
@@ -163,7 +151,7 @@ def test_wrong_ledger_balance_dispute_with_no_voucher_cited_uses_outstanding(cas
         ageing={"0-30": 50000.0, "31-60": 0.0, "61-90": 0.0, "90+": 0.0}, open_bills=[],
     )
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: outstanding)
-    result = sa3.run(_task("sa3_dispute", "dispute"),
+    result = sa3.run(_task("sa3_dispute", "dispute", entities={"dispute_about_balance": True}),
                      _state("I don't agree with the balance you're showing me."))
     assert "50,000.00" in result.customer_message
     assert _figures(result.customer_message) <= {50000.0}
@@ -188,7 +176,7 @@ def test_multiple_cited_vouchers_each_get_their_own_evidence(case_recorder, monk
 
 def test_dispute_case_is_recorded_as_an_executed_auto_action(case_recorder, monkeypatch):
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
-    result = sa3.run(_task("sa3_dispute", "dispute"),
+    result = sa3.run(_task("sa3_dispute", "dispute", entities={"dispute_about_balance": True}),
                      _state("The balance shown on my account is wrong."))
     action = next(a for a in result.actions if a.type == "create_dispute")
     assert action.mode == "auto" and action.executed is True
@@ -211,17 +199,20 @@ def test_non_dispute_intent_is_ignored_by_sa3():
 
 
 @pytest.mark.parametrize(
-    "message,intents,expected_type",
+    "intents,approval_type_entity,expected_type",
     [
-        ("Give me a special discount on this order.", ("settlement_request",), "special_discount"),
-        ("Can you settle my old dues for less?", ("settlement_request",), "settlement"),
-        ("Please increase my credit limit to 5 lakh.", ("settlement_request",), "credit_limit"),
-        ("Issue a credit note for the shortfall.", ("credit_note_request",), "large_credit_note"),
-        ("Please write off the remaining interest.", ("settlement_request",), "write_off"),
-        ("Can you extend my payment terms to 90 days?", ("settlement_request",), "exceptional_terms"),
+        (("settlement_request",), "special_discount", "special_discount"),
+        (("settlement_request",), "credit_limit", "credit_limit"),
+        (("credit_note_request",), "large_credit_note", "large_credit_note"),
+        (("settlement_request",), "write_off", "write_off"),
+        (("settlement_request",), "exceptional_terms", "exceptional_terms"),
+        (("settlement_request",), "settlement", "settlement"),
     ],
 )
-def test_approval_type_covers_the_roadmap_categories(message, intents, expected_type, monkeypatch):
+def test_approval_type_covers_the_roadmap_categories(intents, approval_type_entity, expected_type, monkeypatch):
+    """The model classifies which of the six categories this is
+    (Request.approval_type, see orchestrator.entities_from) — SA-4 just reads
+    it. No message wording is inspected here at all."""
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
     monkeypatch.setattr(c3, "get_payment_history", lambda cid: None)
     monkeypatch.setattr(c3, "get_approvals", lambda cid: [])
@@ -234,8 +225,49 @@ def test_approval_type_covers_the_roadmap_categories(message, intents, expected_
 
     monkeypatch.setattr(services, "create_approval", fake_approval)
     monkeypatch.setattr(services, "record_event", lambda *a, **kw: (None, True))
-    sa4.run(_task("sa4_approval", *intents), _state(message))
+    sa4.run(
+        _task("sa4_approval", *intents, entities={"approval_type": approval_type_entity}),
+        _state("some request text, irrelevant to classification here"),
+    )
     assert captured["type"] == expected_type
+
+
+def test_approval_type_maps_credit_note_request_without_a_model_entity(monkeypatch):
+    """credit_note_request has exactly one matching category — a direct fact,
+    not a guess — so it works even with no model classification at all."""
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
+    monkeypatch.setattr(c3, "get_payment_history", lambda cid: None)
+    monkeypatch.setattr(c3, "get_approvals", lambda cid: [])
+    captured = {}
+
+    def fake_approval(cid, type, requested_by, **kw):
+        captured["type"] = type
+        return Approval(customer_id=cid, type=type, requested_by=requested_by,
+                        amount=kw.get("amount"), context=kw.get("context") or {}), True
+
+    monkeypatch.setattr(services, "create_approval", fake_approval)
+    monkeypatch.setattr(services, "record_event", lambda *a, **kw: (None, True))
+    sa4.run(_task("sa4_approval", "credit_note_request"), _state("Issue a credit note please."))
+    assert captured["type"] == "large_credit_note"
+
+
+def test_approval_type_defaults_to_settlement_with_no_model_entity(monkeypatch):
+    """No model classification and not a credit-note request: `settlement` is
+    the safe generic default rather than a guess at a specific category."""
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
+    monkeypatch.setattr(c3, "get_payment_history", lambda cid: None)
+    monkeypatch.setattr(c3, "get_approvals", lambda cid: [])
+    captured = {}
+
+    def fake_approval(cid, type, requested_by, **kw):
+        captured["type"] = type
+        return Approval(customer_id=cid, type=type, requested_by=requested_by,
+                        amount=kw.get("amount"), context=kw.get("context") or {}), True
+
+    monkeypatch.setattr(services, "create_approval", fake_approval)
+    monkeypatch.setattr(services, "record_event", lambda *a, **kw: (None, True))
+    sa4.run(_task("sa4_approval", "settlement_request"), _state("Please increase my credit limit."))
+    assert captured["type"] == "settlement"
 
 
 # --------------------------------------------------------------------------
@@ -391,6 +423,9 @@ def test_approval_reply_never_confirms_or_denies_the_outcome(approval_recorder, 
 
 
 def test_orchestrator_routes_a_dispute_to_the_real_sa3(monkeypatch):
+    """Under the pinned rules classifier (no LLM, see conftest), there is no
+    model classification of about_balance to read — SA-3's safe default asks
+    for specifics rather than guessing the balance is the relevant evidence."""
     monkeypatch.setattr(c3, "build_customer_360", lambda cid, **kw: None)
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
     monkeypatch.setattr(services, "create_case",
@@ -400,7 +435,8 @@ def test_orchestrator_routes_a_dispute_to_the_real_sa3(monkeypatch):
     state = orc.handle("The balance you're showing me is wrong.", customer_id=CID, message_id="MSG-D")
     summary = orc.summarize(state)
     assert summary["agents"] == ["sa3_dispute"]
-    assert "colleague will review" in state.final_response.lower()
+    reply = state.final_response.lower()
+    assert "invoice" in reply and "issue" in reply
 
 
 def test_orchestrator_routes_an_unspecific_dispute_to_a_clarifying_question(monkeypatch):

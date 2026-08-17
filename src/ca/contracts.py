@@ -424,6 +424,13 @@ class Request(ModelOutput):
     issue_label: str | None = None
     item_mentioned: str | None = None
 
+    # settlement_request / credit_note_request only — which of Approval.type's
+    # six categories this is. A free string, validated against that Literal by
+    # the consumer (`sa4_approval.py`), the same arm's-length pattern already
+    # used for `intent` against the agent catalog: the model names it, the
+    # system checks the name is one it actually recognises.
+    approval_type: str | None = None
+
 
 class Understanding(ModelOutput):
     """The single structured reading of one inbound message. Intents, entities,
@@ -468,18 +475,22 @@ class Case(Contract):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+ApprovalType = Literal[
+    "special_discount",
+    "settlement",
+    "credit_limit",
+    "large_credit_note",
+    "write_off",
+    "exceptional_terms",
+]
+APPROVAL_TYPES: frozenset[str] = frozenset(ApprovalType.__args__)
+
+
 class Approval(Contract):
     approval_id: Id = Field(default_factory=lambda: new_id("approval"))
     customer_id: Id
     conversation_id: Id | None = None  # where to send the decision follow-up
-    type: Literal[
-        "special_discount",
-        "settlement",
-        "credit_limit",
-        "large_credit_note",
-        "write_off",
-        "exceptional_terms",
-    ]
+    type: ApprovalType
     status: Literal["pending", "approved", "rejected", "expired"] = "pending"
     requested_by: AgentName
     amount: float | None = None

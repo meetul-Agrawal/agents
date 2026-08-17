@@ -23,43 +23,34 @@ approve it.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from . import customer360 as c3
 from . import services
-from .contracts import AgentResult, AgentTask, Approval, CustomerAssistState, ProposedAction, ToolCall
-from .sa1_general import _inr, _phrase, _read
-
-# The same domain vocabulary INTENT_RULES already uses to detect these asks in
-# the first place — refining *which kind* of approval this is, not inventing
-# new signal.
-_CREDIT_LIMIT = re.compile(r"\bcredit\s+limit\b", re.I)
-_WRITE_OFF = re.compile(r"\b(write\s*off|waive|waiver)\b", re.I)
-_TERMS = re.compile(r"\b(payment\s+terms|credit\s+terms|\d+\s*day\s+(credit|terms))\b", re.I)
-_DISCOUNT = re.compile(r"\bspecial\s+(price|rate|discount)\b", re.I)
-
-_LABELS = {
-    "large_credit_note": "a credit note",
-    "credit_limit": "a credit limit change",
-    "write_off": "a waiver / write-off",
-    "exceptional_terms": "revised payment terms",
-    "special_discount": "a special price or discount",
-    "settlement": "a settlement",
-}
+from .contracts import (
+    AgentResult,
+    AgentTask,
+    Approval,
+    CustomerAssistState,
+    ProposedAction,
+    ToolCall,
+    APPROVAL_TYPES,
+)
+from .sa1_general import _inr, _phrase, _read, compose_grounded
 
 
-def _approval_type(intents: list[str], message: str) -> str:
+def _approval_type(intents: list[str], entities: dict[str, Any]) -> str:
+    """The model classifies which of the six categories this is (Request.
+    approval_type, extracted in orchestrator.entities_from and validated there
+    against APPROVAL_TYPES). credit_note_request has exactly one matching
+    category, so that mapping is a direct fact, not a guess. `settlement` is
+    the safe default when the model didn't name one — the most generic of the
+    six, never a wrong specific category."""
+    claimed = entities.get("approval_type")
+    if claimed in APPROVAL_TYPES:
+        return claimed
     if "credit_note_request" in intents:
         return "large_credit_note"
-    if _CREDIT_LIMIT.search(message or ""):
-        return "credit_limit"
-    if _WRITE_OFF.search(message or ""):
-        return "write_off"
-    if _TERMS.search(message or ""):
-        return "exceptional_terms"
-    if _DISCOUNT.search(message or ""):
-        return "special_discount"
     return "settlement"
 
 
@@ -83,6 +74,19 @@ def _gather_context(cid: str, calls: list[ToolCall]) -> dict[str, Any]:
 
 
 def _recommendation(context: dict[str, Any]) -> str:
+    """A grounded restatement of the facts already read from tools — for the
+    human reviewer, not the customer. Never a verdict on whether to approve."""
+    facts = dict(context)
+    if "outstanding" in facts:
+        facts["outstanding"] = _inr(facts["outstanding"])
+    composed = compose_grounded(
+        "Summarize these account facts in one or two short sentences for a "
+        "human reviewer deciding an approval request. State only the facts "
+        "given — no recommendation, no decision.",
+        facts,
+    )
+    if composed:
+        return composed
     parts: list[str] = []
     if "outstanding" in context:
         parts.append(f"Outstanding: {_inr(context['outstanding'])} across {context['open_bill_count']} invoice(s).")
@@ -129,7 +133,7 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
     cid = state.customer_id
     calls: list[ToolCall] = []
-    approval_type = _approval_type(intents, state.message)
+    approval_type = _approval_type(intents, entities)
     context = _gather_context(cid, calls)
     recommendation = _recommendation(context)
     amount = _amount(entities)
@@ -154,32 +158,47 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         )
         calls.append(ToolCall(tool="create_event"))
 
-    label = _LABELS[approval_type]
-    amount_text = f" of {_inr(amount)}" if amount is not None else ""
-    message = (
-        f"Thank you — we've logged your request for {label}{amount_text} (reference "
-        f"{approval.approval_id}). This needs review by our team before it can be approved; "
-        "we'll come back to you with a decision."
+    facts: dict[str, Any] = {"approval_type": approval_type, "reference": approval.approval_id}
+    if amount is not None:
+        facts["amount"] = _inr(amount)
+    composed = compose_grounded(
+        "Write a short reply telling the customer we've logged their request "
+        "and it needs review before it can be approved.",
+        facts,
     )
-    return result("needs_approval", _phrase(message), calls, actions)
+    amount_text = f" of {_inr(amount)}" if amount is not None else ""
+    message = composed or _phrase(
+        f"Thank you — we've logged your request{amount_text} (reference {approval.approval_id}). "
+        "This needs review by our team before it can be approved; we'll come back "
+        "to you with a decision."
+    )
+    return result("needs_approval", message, calls, actions)
 
 
 def decision_message(approval: Approval, approved: bool, note: str = "") -> str:
-    """The follow-up sent once a human decides. Templated and grounded like
-    every other reply here — the decision itself came from `decide_approval`,
-    never from this function or from an agent."""
-    label = _LABELS.get(approval.type, approval.type)
+    """The follow-up sent once a human decides.
+
+    The verdict sentence is fixed in code, driven by the `approved` bool that
+    already came from `services.decide_approval` — never phrased by the
+    model. See `compose_grounded`'s docstring: this model measurably states
+    the opposite decision inside an otherwise-correct reply, so the one fact
+    that must never be wrong is not entrusted to free text. Any `note` is
+    elaborated by the model and grounding-checked; it is shown no outcome
+    fact, so it has nothing to contradict."""
     amount_text = f" of {_inr(approval.amount)}" if approval.amount is not None else ""
     if approved:
-        base = (
-            f"Good news — your request for {label}{amount_text} (reference "
-            f"{approval.approval_id}) has been approved."
-        )
+        anchor = f"Good news — your request{amount_text} (reference {approval.approval_id}) has been approved."
     else:
-        base = (
-            f"We've reviewed your request for {label}{amount_text} (reference "
-            f"{approval.approval_id}) and are unable to approve it at this time."
+        anchor = (
+            f"We've reviewed your request{amount_text} (reference {approval.approval_id}) "
+            "and are unable to approve it at this time."
         )
-    if note:
-        base += f" {note}"
-    return _phrase(base)
+    if not note:
+        return anchor
+    extra = compose_grounded(
+        "Write one short, warm closing sentence for a customer message, "
+        "incorporating this note. Do not mention approval, rejection, or any "
+        "decision — that has already been said elsewhere in the message.",
+        {"note": note},
+    )
+    return f"{anchor} {extra}" if extra else f"{anchor} {note}"

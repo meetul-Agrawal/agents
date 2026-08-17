@@ -338,6 +338,49 @@ def _phrase(template: str) -> str:
     return candidate if candidate and _grounded(template, candidate) else template
 
 
+_COMPOSE_SYSTEM = (
+    "You write a short, professional customer-service reply for a "
+    "business-to-business receivables desk, using ONLY the facts given to you.\n"
+    "Absolute rule: never state a number, amount, date or reference that is not "
+    "in the facts. Never state a decision or outcome the facts do not contain. "
+    "Return only the reply text."
+)
+
+
+def compose_grounded(instruction: str, facts: dict[str, Any]) -> str | None:
+    """Ask the model to write the whole customer-facing reply from a fixed set
+    of facts — not just reword a pre-built template — then verify it stated no
+    figure or reference the facts do not contain. Returns None when no
+    provider is configured or the candidate fails grounding; callers keep one
+    minimal, factual fallback line for that case, since something must reach
+    the customer even with no model available.
+
+    Not safe for a fact whose *polarity* is the whole message (approved vs.
+    rejected, solved vs. dropped): measured this model stating the opposite
+    decision in the same reply it correctly labelled elsewhere (e.g. "...has
+    been approved. However, ... it was not approved.") — `_grounded` doesn't
+    catch this, it only checks no extra figure was introduced. Callers with a
+    decision like that keep the verdict sentence in code (see
+    `sa4_approval.decision_message`, `sa3_dispute.resolution_message`) and use
+    this only to compose the surrounding, non-decision-bearing text.
+    """
+    import os
+
+    from . import llm
+
+    if os.getenv("CA_PHRASE", "on").lower() == "off" or not llm.available():
+        return None
+    blob = json.dumps(facts, default=str)
+    try:
+        out = llm.complete_structured(
+            _Phrasing, _COMPOSE_SYSTEM, f"{instruction}\n\nFacts:\n{blob}",
+            capability="summarization", example={"text": "a short reply using only the facts above"},
+        )
+    except llm.LLMUnavailable:
+        return None
+    return out.text if out.text and _grounded(blob, out.text) else None
+
+
 # --------------------------------------------------------------------------
 # Tool-selection fallback — the LLM chooses which vetted read to run, we run it
 # --------------------------------------------------------------------------

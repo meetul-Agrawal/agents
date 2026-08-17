@@ -48,6 +48,7 @@ from langgraph.graph import END, START, StateGraph
 from .config import app_db
 from .contracts import (
     AGENT_NAMES,
+    APPROVAL_TYPES,
     AgentResult,
     AgentTask,
     CustomerAssistState,
@@ -531,6 +532,9 @@ EXTRACTION_RULES = (
     "- for a dispute: about_balance (true only if the complaint is about the "
     "balance/ledger figure itself), issue_label (your own short phrase for "
     "what is wrong), item_mentioned (the product named, if any).\n"
+    "- for a settlement_request or credit_note_request: approval_type, one of "
+    "special_discount, settlement, credit_limit, large_credit_note, write_off, "
+    "exceptional_terms.\n"
     "Never write a number that does not appear in the message. Omit a field "
     "instead of guessing."
 )
@@ -619,6 +623,7 @@ def entities_from(understanding: Understanding, message: str) -> dict[str, Any]:
     quantities: list[tuple[int, float]] = []
     vouchers: list[str] = []
     dispute: Request | None = None
+    approval: Request | None = None
 
     for request in understanding.requests:
         if not _clause_grounded(request.clause, message):
@@ -632,6 +637,8 @@ def entities_from(understanding: Understanding, message: str) -> dict[str, Any]:
             vouchers.append(ref)
         if request.intent == "dispute" and dispute is None:
             dispute = request
+        if request.intent in ("settlement_request", "credit_note_request") and approval is None:
+            approval = request
 
     def ordered(pairs: list[tuple[int, float]]) -> list[float]:
         seen: set[tuple[int, float]] = set()
@@ -657,6 +664,8 @@ def entities_from(understanding: Understanding, message: str) -> dict[str, Any]:
         item = (dispute.item_mentioned or "").strip()
         if item and item.lower() in message.lower():
             found["dispute_item"] = item
+    if approval is not None and approval.approval_type in APPROVAL_TYPES:
+        found["approval_type"] = approval.approval_type
     return found
 
 

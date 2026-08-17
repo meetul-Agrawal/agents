@@ -45,39 +45,31 @@ What the complaint is actually about — a damaged-goods issue vs. a balance
 issue vs. anything else — comes from `orchestrator.understand()`, the same
 single structured LLM call that already classified the message as a dispute
 in the first place (`Request.about_balance` / `.issue_label` /
-`.item_mentioned`, threaded through as `entities["dispute_*"]`). No regex here
-tries to enumerate every way a customer might describe a problem — that list
-is open-ended, which is exactly the kind of judgement call a model handles and
-a pattern list cannot. A small keyword fallback remains for when no model ran
-at all (`classify_rules`); see `_offline_dispute_signal`.
+`.item_mentioned`, threaded through as `entities["dispute_*"]`). No pattern
+list here tries to enumerate every way a customer might describe a problem —
+that list is open-ended, which is exactly the kind of judgement call a model
+handles and a pattern list cannot. When no model ran at all (`classify_rules`,
+no provider configured), there is no classification to read; the safe default
+is to treat the complaint as not-about-balance, which routes it to
+`run()`'s "ask for specifics" branch rather than guessing — a wrong "ask"
+costs one extra turn, a wrong guess risks answering with the wrong evidence.
 """
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from . import customer360 as c3
 from . import services
 from .contracts import AgentResult, AgentTask, Case, CustomerAssistState, ProposedAction, ToolCall
-from .sa1_general import _fmt_date, _inr, _match_product, _phrase, _read
-
-# ponytail: offline-only fallback. When no model ran (`classify_rules`, no
-# provider configured) there is no `Request.about_balance` to read, so this is
-# the one thing worth distinguishing without one: a balance complaint (where
-# the balance IS the evidence) from everything else (where SA-3 must ask,
-# never guess). It does not attempt an issue label — degraded nuance, not a
-# degraded safety property.
-_BALANCE_DISPUTE_FALLBACK = re.compile(r"\b(balance|ledger|outstanding|statement|hisab)\b", re.I)
+from .sa1_general import _fmt_date, _inr, _match_product, _phrase, _read, compose_grounded
 
 
-def _dispute_signal(entities: dict[str, Any], message: str) -> tuple[bool, str | None]:
-    """(about_balance, issue_label) for this dispute. Reads the model's own
-    classification when available; only falls back to the keyword check when
-    no model ran at all."""
-    if "dispute_about_balance" in entities:
-        return bool(entities["dispute_about_balance"]), entities.get("dispute_issue")
-    return bool(_BALANCE_DISPUTE_FALLBACK.search(message or "")), None
+def _dispute_signal(entities: dict[str, Any]) -> tuple[bool, str | None]:
+    """(about_balance, issue_label) for this dispute, from the model's own
+    classification. Absent (no model ran) defaults to not-about-balance —
+    the safe branch that asks rather than guesses."""
+    return bool(entities.get("dispute_about_balance")), entities.get("dispute_issue")
 
 
 def _find(rows: list[dict[str, Any]], voucher_number: str) -> dict[str, Any] | None:
@@ -169,6 +161,23 @@ def _summarize(evidence: list[dict[str, Any]]) -> tuple[str, bool]:
     return " ".join(lines), needs_more
 
 
+_MONEY_FIELDS = ("amount", "outstanding")
+
+
+def _grounding_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Evidence with money fields pre-formatted (`_inr`) before it reaches the
+    composer — so the model copies an already-correct ₹ figure verbatim rather
+    than reformatting a raw number itself and guessing a currency symbol."""
+    out = []
+    for item in evidence:
+        entry = dict(item)
+        for field in _MONEY_FIELDS:
+            if entry.get(field) is not None:
+                entry[field] = _inr(entry[field])
+        out.append(entry)
+    return out
+
+
 def _intents_of(task: AgentTask) -> list[str]:
     named = task.inputs.get("intents")
     if isinstance(named, list) and named:
@@ -195,7 +204,7 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     cid = state.customer_id
     calls: list[ToolCall] = []
     voucher_numbers = entities.get("voucher_numbers") or []
-    about_balance, issue_label = _dispute_signal(entities, state.message)
+    about_balance, issue_label = _dispute_signal(entities)
     item_hint = entities.get("dispute_item")
 
     # Nothing concrete to check: no invoice cited, and the complaint is not
@@ -203,13 +212,20 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     # Ask for the specifics instead of opening an empty case or answering with
     # an unrelated figure — this is the fix for the ₹1+ crore balance dump.
     if not voucher_numbers and not about_balance:
-        ask = (
+        composed = compose_grounded(
+            "Write a short reply asking the customer for the invoice number, "
+            "which item was affected, and a short description of the issue "
+            "(for example: damaged, wrong item, or short quantity), so we can "
+            "look into their complaint.",
+            {},
+        )
+        ask = composed or _phrase(
             "Thanks for letting us know — to look into this, could you share the invoice "
             "number, which item was affected, and a short description of the issue (for "
             "example: damaged, wrong item, or short quantity)? Once we have that we'll open "
             "a case and take a look."
         )
-        return result("needs_information", _phrase(ask), calls)
+        return result("needs_information", ask, calls)
 
     evidence = (
         _voucher_evidence(cid, voucher_numbers, item_hint or state.message, calls)
@@ -237,35 +253,54 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
     summary, ambiguous_item = _summarize(evidence)
     unfound = [e["voucher_number"] for e in evidence if e["type"] == "voucher_not_found"]
-    if unfound:
-        clarify = " Could you double-check the invoice number?"
-    elif ambiguous_item:
-        clarify = " Which item on that invoice did you mean?"
-    else:
-        clarify = ""
-
-    message = (
-        f"Thank you for flagging this — we've opened case {case.case_id} to look into it. "
-        f"{summary}{clarify} A colleague will review the details and get back to you."
-    )
     needs_more = bool(unfound) or ambiguous_item
+
+    facts: dict[str, Any] = {"case_id": case.case_id, "evidence": _grounding_evidence(evidence)}
+    if unfound:
+        facts["ask"] = "confirm the invoice number, which could not be found on their account"
+    elif ambiguous_item:
+        facts["ask"] = "confirm which item on the invoice they mean"
+    composed = compose_grounded(
+        "Write a short reply telling the customer we've opened a case to look "
+        "into their dispute, stating what the evidence facts show. If an "
+        "'ask' fact is present, ask that question too.",
+        facts,
+    )
+    message = composed or _phrase(
+        f"Thank you for flagging this — we've opened case {case.case_id} to look into it. "
+        f"{summary}"
+        + (" Could you double-check the invoice number?" if unfound
+           else " Which item on that invoice did you mean?" if ambiguous_item else "")
+        + " A colleague will review the details and get back to you."
+    )
     return result(
-        "needs_information" if needs_more else "completed", _phrase(message), calls, case.case_id, actions,
+        "needs_information" if needs_more else "completed", message, calls, case.case_id, actions,
     )
 
 
 def resolution_message(case: Case, outcome: str, note: str = "") -> str:
-    """The follow-up sent once a human resolves a case. Templated and grounded
-    like every other reply here — never a fresh, ungrounded LLM composition."""
+    """The follow-up sent once a human resolves a case.
+
+    The outcome sentence is fixed in code, driven by the `outcome` string
+    that already came from `services.resolve_case` — never phrased by the
+    model. See `compose_grounded`'s docstring: this model measurably states
+    the opposite decision inside an otherwise-correct reply, so the one fact
+    that must never be wrong is not entrusted to free text. Any `note` is
+    elaborated by the model and grounding-checked; it is shown no outcome
+    fact, so it has nothing to contradict."""
     if outcome == "solved":
-        base = (
-            f"Update on your case {case.case_id} ({case.title}): this has been resolved."
-        )
+        anchor = f"Update on your case {case.case_id} ({case.title}): this has been resolved."
     else:
-        base = (
+        anchor = (
             f"Update on your case {case.case_id} ({case.title}): after review, we found no "
             "further action is needed."
         )
-    if note:
-        base += f" {note}"
-    return _phrase(base)
+    if not note:
+        return anchor
+    extra = compose_grounded(
+        "Write one short, warm closing sentence for a customer message, "
+        "incorporating this note. Do not restate or imply the case's "
+        "outcome — that has already been said elsewhere in the message.",
+        {"note": note},
+    )
+    return f"{anchor} {extra}" if extra else f"{anchor} {note}"
