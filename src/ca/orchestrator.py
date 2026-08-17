@@ -542,17 +542,32 @@ EXTRACTION_RULES = (
 
 def understand(text: str) -> Understanding | None:
     """One call per (message, model). Memoized so the intents and the entities
-    read off the same object instead of paying twice."""
+    read off the same object instead of paying twice.
+
+    `_understand` raises rather than returning None on failure, so a transient
+    LLMUnavailable (rate limit, provider blip) is never what gets cached —
+    `lru_cache` only memoizes a successful return, never a raised exception.
+    Caught and turned into None only here, outside the cache boundary. Measured
+    the bug this prevents: with the try/except inside the cached function, one
+    transient failure on a given message text permanently pinned that exact
+    text to the classify_rules fallback for the rest of the process's life —
+    every retry was a cache hit on the cached `None`, so the model was never
+    asked again even once it would have succeeded.
+    """
     from . import llm
 
-    return _understand(text, llm.MODELS["classification"])
+    try:
+        return _understand(text, llm.MODELS["classification"])
+    except LLMUnavailable:
+        return None
 
 
 @lru_cache(maxsize=512)
-def _understand(text: str, model: str) -> Understanding | None:
+def _understand(text: str, model: str) -> Understanding:
     """One call, one object: intents, entities, language and the cross-customer
-    signal together. Returns None when no provider is configured or the model
-    gives nothing usable — callers fall back to the rules.
+    signal together. Raises LLMUnavailable when no provider is configured or
+    the model gives nothing usable — `understand()` is what turns that into
+    None for callers, uncached.
     """
     del model  # keyed on it for the cache; the provider reads it from MODELS
     known = sorted(INTENT_AGENT)
@@ -567,35 +582,32 @@ def _understand(text: str, model: str) -> Understanding | None:
         "Set refers_to_other_party to the party name when the customer asks about "
         "someone else's terms."
     )
-    try:
-        return complete_structured(
-            Understanding,
-            CLASSIFIER_SYSTEM + EXTRACTION_RULES,
-            prompt,
-            capability="classification",
-            example={
-                "language": "hinglish",
-                "is_greeting_only": False,
-                "refers_to_other_party": None,
-                "requests": [
-                    {
-                        "intent": "payment_claim",
-                        "clause": "NEFT kar diya hai 1,50,000 ka",
-                        "confidence": 0.95,
-                        "amount": {"text": "1,50,000", "value": 150000, "unit": None},
-                        "quantity": None,
-                        "voucher_ref": None,
-                        "due_date_text": None,
-                        "reason": "customer asserts a completed transfer",
-                        "about_balance": False,
-                        "issue_label": None,
-                        "item_mentioned": None,
-                    },
-                ],
-            },
-        )
-    except LLMUnavailable:
-        return None
+    return complete_structured(
+        Understanding,
+        CLASSIFIER_SYSTEM + EXTRACTION_RULES,
+        prompt,
+        capability="classification",
+        example={
+            "language": "hinglish",
+            "is_greeting_only": False,
+            "refers_to_other_party": None,
+            "requests": [
+                {
+                    "intent": "payment_claim",
+                    "clause": "NEFT kar diya hai 1,50,000 ka",
+                    "confidence": 0.95,
+                    "amount": {"text": "1,50,000", "value": 150000, "unit": None},
+                    "quantity": None,
+                    "voucher_ref": None,
+                    "due_date_text": None,
+                    "reason": "customer asserts a completed transfer",
+                    "about_balance": False,
+                    "issue_label": None,
+                    "item_mentioned": None,
+                },
+            ],
+        },
+    )
 
 
 def _clause_grounded(clause: str, message: str) -> bool:

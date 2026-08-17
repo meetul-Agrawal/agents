@@ -431,6 +431,27 @@ class Request(ModelOutput):
     # system checks the name is one it actually recognises.
     approval_type: str | None = None
 
+    @field_validator(
+        "voucher_ref", "due_date_text", "issue_label", "item_mentioned", "approval_type",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_plain_string_fields(cls, v: Any) -> Any:
+        """Measured the model shaping a plain-string field like its
+        `ExtractedValue`-typed siblings above (`{"text": ..., "value": ...}`)
+        instead of a bare string — plausibly by analogy to `amount`/`quantity`
+        sitting right next to them, and not confined to one field: seen on
+        both `voucher_ref` and `item_mentioned` in practice. Strict validation
+        rejects the *entire* Understanding over one wrong field, discarding an
+        otherwise-correct classification. Every field here is still a claim
+        the orchestrator re-verifies against the raw message before trusting
+        it (`verify_value`, `_clause_grounded`), so coercing the shape here
+        loses no safety — it only stops a good parse being thrown away for a
+        wrong-shaped-but-recoverable field."""
+        if isinstance(v, dict):
+            return v.get("text") or v.get("value")
+        return v
+
 
 class Understanding(ModelOutput):
     """The single structured reading of one inbound message. Intents, entities,
