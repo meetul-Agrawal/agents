@@ -540,8 +540,32 @@ EXTRACTION_RULES = (
 )
 
 
-def understand(text: str) -> Understanding | None:
-    """One call per (message, model). Memoized so the intents and the entities
+def format_recent_history(conversation_id: str | None, max_messages: int = 6) -> str:
+    """Format recent turns in this conversation as a compact transcript block
+    to give the understanding model conversational context."""
+    if not conversation_id:
+        return ""
+    from . import inbox
+
+    try:
+        msgs = inbox.conversation_messages(conversation_id)
+    except Exception:
+        return ""
+
+    valid = [m for m in msgs if (m.text or "").strip()]
+    if not valid:
+        return ""
+
+    recent = valid[-max_messages:]
+    lines: list[str] = []
+    for m in recent:
+        speaker = "Customer" if m.direction == "inbound" else "Assistant"
+        lines.append(f"{speaker}: {m.text.strip()}")
+    return "\n".join(lines)
+
+
+def understand(text: str, history: str = "") -> Understanding | None:
+    """One call per (message, model, history). Memoized so the intents and the entities
     read off the same object instead of paying twice.
 
     `_understand` raises rather than returning None on failure, so a transient
@@ -557,13 +581,13 @@ def understand(text: str) -> Understanding | None:
     from . import llm
 
     try:
-        return _understand(text, llm.MODELS["classification"])
+        return _understand(text, llm.MODELS["classification"], history)
     except LLMUnavailable:
         return None
 
 
 @lru_cache(maxsize=512)
-def _understand(text: str, model: str) -> Understanding:
+def _understand(text: str, model: str, history: str = "") -> Understanding:
     """One call, one object: intents, entities, language and the cross-customer
     signal together. Raises LLMUnavailable when no provider is configured or
     the model gives nothing usable — `understand()` is what turns that into
@@ -571,17 +595,34 @@ def _understand(text: str, model: str) -> Understanding:
     """
     del model  # keyed on it for the cache; the provider reads it from MODELS
     known = sorted(INTENT_AGENT)
-    prompt = (
-        "<customer_inbound_message>\n"
-        f"{text}\n"
-        "</customer_inbound_message>\n\n"
-        f"Allowed intent names: {known}\n\n"
-        "Return one request per distinct thing the customer is asking for, with "
-        "the clause it came from and a confidence between 0 and 1. "
-        "Set is_greeting_only when the message carries no business request. "
-        "Set refers_to_other_party to the party name when the customer asks about "
-        "someone else's terms."
-    )
+    if history.strip():
+        prompt = (
+            "<recent_conversation_history>\n"
+            f"{history.strip()}\n"
+            "</recent_conversation_history>\n\n"
+            "<customer_inbound_message>\n"
+            f"{text}\n"
+            "</customer_inbound_message>\n\n"
+            f"Allowed intent names: {known}\n\n"
+            "Return one request per distinct thing the customer is asking for in the "
+            "current inbound message, with the clause it came from and a confidence between 0 and 1. "
+            "Use the recent conversation history to understand context, references, and pronouns. "
+            "Set is_greeting_only when the message carries no business request. "
+            "Set refers_to_other_party to the party name when the customer asks about "
+            "someone else's terms."
+        )
+    else:
+        prompt = (
+            "<customer_inbound_message>\n"
+            f"{text}\n"
+            "</customer_inbound_message>\n\n"
+            f"Allowed intent names: {known}\n\n"
+            "Return one request per distinct thing the customer is asking for, with "
+            "the clause it came from and a confidence between 0 and 1. "
+            "Set is_greeting_only when the message carries no business request. "
+            "Set refers_to_other_party to the party name when the customer asks about "
+            "someone else's terms."
+        )
     return complete_structured(
         Understanding,
         CLASSIFIER_SYSTEM + EXTRACTION_RULES,
@@ -731,7 +772,8 @@ def classify_llm(text: str, context: dict[str, Any] | None = None) -> list[Inten
     if AMBIGUOUS_REFERENCE.search(text) and len(context.get("matching_vouchers", [])) > 1:
         return classify_rules(text, context)
 
-    understanding = understand(text)
+    history = context.get("history", "")
+    understanding = understand(text, history=history)
     if understanding is None:
         return classify_rules(text, context)
     if understanding.is_greeting_only and not understanding.requests:
@@ -1039,7 +1081,8 @@ def classify_intent(
 ) -> dict[str, Any]:
     config = _config(config)
     classifier: Classifier = config.get("classifier") or default_classifier()
-    context = config.get("case_context", {})
+    history = format_recent_history(state.conversation_id)
+    context = {"history": history, **config.get("case_context", {})}
     intents = classifier(state.message, context)
 
     # Merge, never replace: message_id and context_error are already in here.
@@ -1050,7 +1093,7 @@ def classify_intent(
     # caller asking for rules must make no network call at all, or "rules" is
     # not what got measured.
     understanding = (
-        understand(state.message)
+        understand(state.message, history=history)
         if getattr(classifier, "uses_model", True) and llm_available()
         else None
     )

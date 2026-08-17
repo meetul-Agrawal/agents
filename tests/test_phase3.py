@@ -840,3 +840,27 @@ def test_resumed_thread_never_serves_another_customers_context():
         second.customer_context.customer.customer_id
     )
     assert second.customer_context.customer.customer_id == "6a6464a09f707bd304035494"
+
+
+def test_format_recent_history_empty_on_missing_or_empty_conv():
+    assert orc.format_recent_history(None) == ""
+    assert orc.format_recent_history("nonexistent_conv_id_12345") == ""
+
+
+def test_format_recent_history_formats_turns_properly(monkeypatch):
+    from ca.contracts import Message, utcnow
+
+    mock_messages = [
+        Message(message_id="m1", external_id="m1", conversation_id="c1", channel="chat",
+                direction="inbound", text="I got damage stocks", timestamp=utcnow()),
+        Message(message_id="m2", external_id="m2", conversation_id="c1", channel="chat",
+                direction="outbound", text="Which invoice?", timestamp=utcnow()),
+        Message(message_id="m3", external_id="m3", conversation_id="c1", channel="chat",
+                direction="inbound", text="Invoice 149", timestamp=utcnow()),
+    ]
+    monkeypatch.setattr("ca.inbox.conversation_messages", lambda cid: mock_messages if cid == "c1" else [])
+
+    history = orc.format_recent_history("c1", max_messages=2)
+    assert "Customer: Invoice 149" in history
+    assert "Assistant: Which invoice?" in history
+    assert "Customer: I got damage stocks" not in history  # truncated by max_messages=2
