@@ -97,7 +97,7 @@ class ClassifyReq(BaseModel):
     message: str
     customer_id: str | None = None
     conversation_id: str
-    classifier: str = "llm"  # "llm" | "rules"
+    classifier: str = "llm"
 
 
 @app.post("/api/classify")
@@ -122,13 +122,12 @@ def classify(body: ClassifyReq):
         {"$set": {"updated_at": utcnow()}},
     )
 
-    fn = orchestrator.classify_rules if body.classifier == "rules" else orchestrator.classify_llm
     state = orchestrator.handle(
         body.message,
         channel="chat",
         customer_id=body.customer_id,
         conversation_id=body.conversation_id,
-        classifier=fn,
+        classifier=orchestrator.classify_llm,
     )
 
     if state.final_response:

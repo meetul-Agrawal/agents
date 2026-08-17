@@ -448,9 +448,20 @@ def test_approval_reply_never_confirms_or_denies_the_outcome(approval_recorder, 
 
 
 def test_orchestrator_routes_a_dispute_to_the_real_sa3(monkeypatch):
-    """Under the pinned rules classifier (no LLM, see conftest), there is no
-    model classification of about_balance to read — SA-3's safe default asks
-    for specifics rather than guessing the balance is the relevant evidence."""
+    """A dispute where the model doesn't flag `about_balance` — SA-3's safe
+    default asks for specifics rather than guessing the balance is the
+    relevant evidence. `understand` is pinned to a minimal dispute reading
+    (classification has no deterministic offline mode to exercise this
+    otherwise) rather than left to a live, possibly-drifting call."""
+    from ca.contracts import Request, Understanding
+
+    monkeypatch.setattr(
+        orc, "understand",
+        lambda *a, **kw: Understanding(requests=[
+            Request(intent="dispute", confidence=0.9,
+                    clause="The balance you're showing me is wrong.")
+        ]),
+    )
     monkeypatch.setattr(c3, "build_customer_360", lambda cid, **kw: None)
     monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
     monkeypatch.setattr(services, "create_case",

@@ -6,9 +6,10 @@
     uv run scripts/run_evals.py all --accept       # store new baselines
 
 Suites:
-  routing      — the real orchestrator over mock agents, deterministic
-                 classifier. Regression gate for planning and the approval gate.
-  routing_llm  — same dataset through the LLM classifier (costs tokens).
+  routing      — the real orchestrator over mock agents: intent, plan and the
+                 approval gate. Uses the LLM classifier — the only classifier
+                 there is (routing has no deterministic offline mode, so this
+                 suite costs tokens and can drift run to run).
   customer360  — real: runs the Phase 1 read services against MongoDB and
                  grades them against golden values produced by an independent
                  implementation (scripts/gen_golden.js).
@@ -31,16 +32,10 @@ DATASETS = Path("evals/datasets")
 
 
 def _routing_run(case: E.EvalCase, classifier=None) -> dict:
-    """The real orchestrator over mock agents: intent, plan and safety only.
+    """The real orchestrator over mock agents: intent, plan and safety only."""
+    from ca.orchestrator import classify_llm, handle, summarize
 
-    Pinned to the deterministic classifier: this suite is the regression gate
-    for the orchestration machinery, so it must not inherit the model's
-    run-to-run drift — and `classifier=None` would mean "the default", which is
-    now the model. `scripts/eval_report.py` is where classifiers get compared.
-    """
-    from ca.orchestrator import classify_rules, handle, summarize
-
-    classifier = classifier or classify_rules
+    classifier = classifier or classify_llm
 
     state = handle(
         case.input,
@@ -124,17 +119,6 @@ def _conversation_run(case: E.EvalCase) -> dict:
     return result
 
 
-def _routing_llm_run(case: E.EvalCase) -> dict:
-    """The same dataset, classified by the LLM instead of the rules. Graded on
-    agent selection and safety only — exact intent wording is the rules' job."""
-    from ca import llm
-    from ca.orchestrator import classify_llm
-
-    if not llm.available():
-        raise RuntimeError("no LLM provider configured; set NVIDIA_API_KEY to grade this suite")
-    return _routing_run(case, classifier=classify_llm)
-
-
 SUITES = {
     "routing": (
         _routing_run,
@@ -151,10 +135,6 @@ SUITES = {
             E.numeric("amounts", "quantities"),
             E.exact_match("voucher_numbers"),
         ],
-    ),
-    "routing_llm": (
-        _routing_llm_run,
-        [E.agent_set(), E.exact_match("requires_human", "executed_without_approval")],
     ),
     "resolution": (
         _resolution_run,
@@ -199,8 +179,7 @@ SUITES = {
 
 def run(suite: str, accept: bool) -> int:
     run_fn, graders = SUITES[suite]
-    dataset = DATASETS / ("routing" if suite == "routing_llm" else suite)
-    report = E.run_suite(suite, E.load_datasets(dataset), run_fn, graders)
+    report = E.run_suite(suite, E.load_datasets(DATASETS / suite), run_fn, graders)
     report.save(REPORTS)
     print(report.to_markdown())
 
@@ -220,7 +199,7 @@ def run(suite: str, accept: bool) -> int:
 def main(argv: list[str]) -> int:
     accept = "--accept" in argv
     names = [a for a in argv[1:] if not a.startswith("-")] or ["all"]
-    suites = [s for s in SUITES if s != "routing_llm"] if names == ["all"] else names
+    suites = list(SUITES) if names == ["all"] else names
     unknown = set(suites) - set(SUITES)
     if unknown:
         print(f"unknown suite(s): {sorted(unknown)}; known: {sorted(SUITES)}")

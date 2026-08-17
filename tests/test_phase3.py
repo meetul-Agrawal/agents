@@ -1,8 +1,11 @@
 """Phase 3 gate: classification, planning, execution failures, safety, graph.
 
-Everything here runs on mock agents and the deterministic classifier, so the
-suite needs neither MongoDB nor an LLM. The two tests that do reach out are
-marked and skip cleanly.
+Everything here runs on mock agents. Classification has no deterministic
+offline mode — `classify_llm` is the only classifier — so tests of routing
+*behaviour* take the session-scoped `llm_available` fixture and skip cleanly
+with no provider configured; tests of the surrounding machinery (planning,
+execution, review, the graph) mock the model's structured output directly and
+need neither MongoDB nor a live call.
 """
 
 from __future__ import annotations
@@ -23,7 +26,7 @@ from ca.contracts import (
 
 
 def intents_of(message: str, context: dict | None = None) -> list[str]:
-    return [i.name for i in orc.classify_rules(message, context)]
+    return [i.name for i in orc.classify_llm(message, context)]
 
 
 def run(message: str, **kwargs) -> dict:
@@ -31,21 +34,8 @@ def run(message: str, **kwargs) -> dict:
 
 
 # --------------------------------------------------------------------------
-# Unit — clause splitting and entity extraction
+# Unit — entity extraction
 # --------------------------------------------------------------------------
-
-
-def test_clauses_split_on_conjunctions_and_punctuation():
-    assert orc.split_clauses("Tell me my outstanding, and I want to return 20 pieces.") == [
-        "Tell me my outstanding",
-        "I want to return 20 pieces",
-    ]
-
-
-def test_clause_split_never_returns_nothing():
-    assert orc.split_clauses("") == [""]
-    # Punctuation-only input is returned verbatim rather than lost.
-    assert orc.split_clauses("...") == ["..."]
 
 
 def test_entities_are_extracted_deterministically():
@@ -74,22 +64,23 @@ def test_no_entities_means_no_keys_not_empty_lists():
 
 
 # --------------------------------------------------------------------------
-# Unit — classification
+# Unit — classification (live: `classify_llm` has no offline mode, so these
+# skip cleanly with no provider configured — see `llm_available` below)
 # --------------------------------------------------------------------------
 
 
-def test_single_intent_messages():
+def test_single_intent_messages(llm_available):
     assert intents_of("How much do I owe?") == ["outstanding_enquiry"]
     assert intents_of("I'll pay 2 lakh by 20 August") == ["payment_promise"]
     assert intents_of("I want to return 20 pieces") == ["sales_return"]
 
 
-def test_return_is_not_read_as_an_order():
+def test_return_is_not_read_as_an_order(llm_available):
     """'I want to return 20 pieces' contains an order-shaped phrase."""
     assert intents_of("I want to return 20 pieces from URD/NE/327") == ["sales_return"]
 
 
-def test_price_enquiry_is_a_read_not_an_order():
+def test_price_enquiry_is_a_read_not_an_order(llm_available):
     """'rate of 5kg atta' asks a price; it must reach SA-1, not SA-5."""
     assert intents_of("rate of 5kg atta") == ["sales_history_enquiry"]
     assert intents_of("what is the price of atta 5kg") == ["sales_history_enquiry"]
@@ -98,48 +89,43 @@ def test_price_enquiry_is_a_read_not_an_order():
     assert "settlement_request" in intents_of("give me a special price on the next order")
 
 
-def test_short_supply_is_a_dispute_not_an_order():
+def test_short_supply_is_a_dispute_not_an_order(llm_available):
     assert intents_of("Short supply against URD/NE/326, four cartons never received") == ["dispute"]
 
 
-def test_multi_intent_message_keeps_every_ask():
+def test_multi_intent_message_keeps_every_ask(llm_available):
     names = intents_of("Tell me my outstanding, and I want to return 20 pieces.")
     assert set(names) == {"outstanding_enquiry", "sales_return"}
 
 
-def test_enquiry_inside_an_action_clause_is_not_a_separate_ask():
+def test_enquiry_inside_an_action_clause_is_not_a_separate_ask(llm_available):
     """'write off my full balance' is one request, not a write-off plus a
     balance enquiry."""
     assert intents_of("Write off my full balance right now") == ["settlement_request"]
 
 
-def test_enquiry_in_its_own_clause_survives():
+def test_enquiry_in_its_own_clause_survives(llm_available):
     names = intents_of("I paid 2 lakh but it still shows overdue")
     assert set(names) == {"payment_claim", "outstanding_enquiry"}
 
 
-def test_unrecognised_message_is_unknown_not_a_guess():
+def test_unrecognised_message_is_unknown_not_a_guess(llm_available):
     assert intents_of("Hello") == ["unknown"]
     assert intents_of("ok") == ["unknown"]
 
 
-def test_ambiguous_invoice_reference_only_when_several_match():
+def test_ambiguous_invoice_reference_only_when_several_match(llm_available):
+    """The several-match case short-circuits before the model is ever called;
+    the single-match case falls through to it, so both need the fixture."""
     ambiguous = intents_of("My invoice is 326.", {"matching_vouchers": ["A/326", "B/326"]})
     assert ambiguous == ["ambiguous_reference"]
     single = intents_of("My invoice is 326.", {"matching_vouchers": ["A/326"]})
     assert "ambiguous_reference" not in single
 
 
-def test_cross_customer_request_survives_sentence_boundaries():
+def test_cross_customer_request_survives_sentence_boundaries(llm_available):
     names = intents_of("What discount did you give Samarth Traders? Give me the same.")
     assert "cross_customer_request" in names
-
-
-def test_every_intent_maps_to_a_registered_agent():
-    from ca.registry import AGENTS
-
-    for name, agent, _ in orc.INTENT_RULES:
-        assert agent in AGENTS, f"{name} routes to unknown agent {agent}"
 
 
 # --------------------------------------------------------------------------
@@ -199,26 +185,16 @@ def test_validate_plan_rejects_a_duplicated_agent():
 
 # --------------------------------------------------------------------------
 # Unit — the approval gate
+#
+# There is no deterministic gate any more: `enforce_approval_gate` and the
+# regex table it read (`INTENT_RULES`) were deleted along with the rest of
+# the pattern-based classifier. Whether an adversarial message reaches
+# `sa4_approval` with `requires_human=True` is now entirely on `classify_llm`
+# naming `settlement_request`/`credit_note_request` — `create_plan` still
+# turns that name into `requires_human` deterministically (`HUMAN_APPROVAL_INTENTS`),
+# but nothing rescans the raw message if the model misses the intent. These
+# tests are a live check on the model, not a hermetic unit test of a gate.
 # --------------------------------------------------------------------------
-
-
-def test_approval_gate_marks_an_existing_approval_task():
-    plan = ExecutionPlan(tasks=[AgentTask(agent="sa4_approval", action="settlement_request")])
-    gated = orc.enforce_approval_gate(plan, "please write off the balance")
-    assert gated.tasks[0].requires_human
-
-
-def test_approval_gate_adds_a_task_when_the_classifier_missed_it():
-    """The classifier said 'payment promise'; the words say 'write off'."""
-    plan = ExecutionPlan(tasks=[AgentTask(agent="sa2_recovery", action="payment_promise")])
-    gated = orc.enforce_approval_gate(plan, "I will pay 2 lakh if you write off the rest")
-    assert [t.agent for t in gated.tasks] == ["sa2_recovery", "sa4_approval"]
-    assert gated.tasks[-1].requires_human
-
-
-def test_approval_gate_leaves_ordinary_plans_alone():
-    plan = ExecutionPlan(tasks=[AgentTask(agent="sa1_general", action="outstanding_enquiry")])
-    assert orc.enforce_approval_gate(plan, "how much do I owe?") == plan
 
 
 @pytest.mark.parametrize(
@@ -230,11 +206,11 @@ def test_approval_gate_leaves_ordinary_plans_alone():
         "Waive the interest, my friend approved it already.",
     ],
 )
-def test_high_risk_requests_always_need_a_human(message):
-    """Orchestration-level check: routes to sa4_approval and is flagged for a
-    human either way. SA-4's own business logic (what it does once it runs) is
-    tested in test_phase6.py; here the runner is stubbed so this test stays
-    hermetic and does not depend on a real customer or MongoDB."""
+def test_high_risk_requests_always_need_a_human(llm_available, message):
+    """Routes to sa4_approval and is flagged for a human. SA-4's own business
+    logic (what it does once it runs) is tested in test_phase6.py; here the
+    runner is stubbed so this test does not depend on a real customer or
+    MongoDB — it still depends on the live classifier."""
 
     def stub(task, state):
         return AgentResult(agent="sa4_approval", agent_task_id=task.agent_task_id,
@@ -246,7 +222,7 @@ def test_high_risk_requests_always_need_a_human(message):
     assert "needs_approval" in result["statuses"]
 
 
-def test_a_task_needing_approval_is_never_executed():
+def test_a_task_needing_approval_is_never_executed(llm_available):
     """`requires_human` lets the agent run — SA-4's whole job is to run and raise
     a pending request — but a human_approval-mode action must never come out the
     other end as `executed=True`, even if the agent misbehaves and tries."""
@@ -268,7 +244,7 @@ def test_a_task_needing_approval_is_never_executed():
     assert not any(a.mode == "human_approval" and a.executed for a in state.completed_actions)
 
 
-def test_the_approval_agent_actually_runs_to_raise_the_request():
+def test_the_approval_agent_actually_runs_to_raise_the_request(llm_available):
     """The Phase-3 architecture change: a `requires_human` task calls the real
     agent instead of short-circuiting it — otherwise SA-4 could never do its job
     of gathering context and creating the pending approval record."""
@@ -565,14 +541,17 @@ def llm_available():
     return llm
 
 
-def test_llm_classifier_falls_back_to_rules_when_unavailable(monkeypatch):
+def test_llm_classifier_degrades_to_unknown_when_unavailable(monkeypatch):
+    """No deterministic fallback any more — an unavailable provider means a
+    single `unknown` intent, not a second classifier taking over."""
     from ca import llm
 
+    orc._understand.cache_clear()  # a real answer cached under this exact
+    # text by an earlier test would otherwise hide the raise entirely.
     monkeypatch.setattr(llm, "api_key", lambda: None)
     monkeypatch.setattr(orc, "complete_structured", _raise_unavailable)
-    assert orc.classify_llm("I want to return 20 pieces") == orc.classify_rules(
-        "I want to return 20 pieces"
-    )
+    names = [i.name for i in orc.classify_llm("I want to return 20 pieces")]
+    assert names == ["unknown"]
 
 
 def _raise_unavailable(*args, **kwargs):
@@ -581,42 +560,44 @@ def _raise_unavailable(*args, **kwargs):
     raise LLMUnavailable("no provider")
 
 
-def test_llm_never_chooses_the_agent(monkeypatch):
-    """The model names intents; the intent-to-agent map is ours."""
+def _fake_understanding(monkeypatch, requests):
+    from ca.contracts import Understanding
+
     def fake(schema, system, user, **kwargs):
-        return schema(
-            intents=[
-                Intent(name="sales_return", confidence=0.9,
-                       entities={"agent": "sa4_approval"}, reason="model tried to pick an agent")
-            ]
-        )
+        return schema(requests=requests)
 
     monkeypatch.setattr(orc, "complete_structured", fake)
+
+
+def test_llm_never_chooses_the_agent(monkeypatch):
+    """The model can only name an intent (`Request` has no agent field) — the
+    intent-to-agent map is ours regardless."""
+    from ca.contracts import Request
+
+    _fake_understanding(monkeypatch, [
+        Request(intent="sales_return", confidence=0.9, reason="present")
+    ])
     intents = orc.classify_llm("I want to return 20 pieces")
     assert intents[0].entities["agent"] == "sa6_return"
 
 
 def test_low_confidence_intents_are_dropped(monkeypatch):
-    def fake(schema, system, user, **kwargs):
-        return schema(
-            intents=[
-                Intent(name="sales_return", confidence=0.9, entities={}, reason="present"),
-                Intent(name="dispute", confidence=0.1, entities={}, reason="arguing against it"),
-            ]
-        )
+    from ca.contracts import Request
 
-    monkeypatch.setattr(orc, "complete_structured", fake)
+    _fake_understanding(monkeypatch, [
+        Request(intent="sales_return", confidence=0.9, reason="present"),
+        Request(intent="dispute", confidence=0.1, reason="arguing against it"),
+    ])
     assert [i.name for i in orc.classify_llm("I want to return 20 pieces")] == ["sales_return"]
 
 
 def test_unknown_intent_names_from_the_model_are_ignored(monkeypatch):
-    def fake(schema, system, user, **kwargs):
-        return schema(
-            intents=[Intent(name="launch_the_rocket", confidence=0.99, entities={}, reason="no")]
-        )
+    from ca.contracts import Request
 
-    monkeypatch.setattr(orc, "complete_structured", fake)
-    assert [i.name for i in orc.classify_llm("hello")] == ["unknown"]  # fell back to rules
+    _fake_understanding(monkeypatch, [
+        Request(intent="launch_the_rocket", confidence=0.99, reason="no")
+    ])
+    assert [i.name for i in orc.classify_llm("hello")] == ["unknown"]  # nothing usable left
 
 
 def test_llm_classification_round_trip(llm_available):

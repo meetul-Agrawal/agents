@@ -656,8 +656,7 @@ export default function App() {
               />
               <div className="controls">
                 <div className="clf-toggle">
-                  <button className={`clf-btn${classifier === 'llm'   ? ' clf-on' : ''}`} onClick={() => setClassifier('llm')}>LLM</button>
-                  <button className={`clf-btn${classifier === 'rules' ? ' clf-on' : ''}`} onClick={() => setClassifier('rules')}>Rules</button>
+                  <button className="clf-btn clf-on">LLM</button>
                 </div>
                 <button className="send-btn" onClick={send} disabled={loading || !input.trim()}>Send</button>
               </div>

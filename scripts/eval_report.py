@@ -3,7 +3,7 @@
 and write a report.
 
     uv run scripts/eval_report.py                    # all configs
-    uv run scripts/eval_report.py rules llm-8b       # a subset
+    uv run scripts/eval_report.py llm-8b llm-70b     # a subset
     uv run scripts/eval_report.py --out Docs/x.md
 
 The question this answers: how much of the LLM's routing accuracy is the model,
@@ -86,25 +86,14 @@ def _llm_classifier(model: str):
 FAST = os.getenv("LLM_MODEL_FAST") or os.getenv("NIM_MODEL") or "meta/llama-3.1-8b-instruct"
 BIG = os.getenv("LLM_MODEL_REASONING", "meta/llama-3.3-70b-instruct")
 
-def _rules_classifier(text, context=None):
-    """Passed explicitly: `None` would mean "the default", and the default is
-    now the model — which is how the rules row silently became an LLM row."""
-    from ca.orchestrator import classify_rules
-
-    return classify_rules(text, context)
-
-
-_rules_classifier.uses_model = False
-
 CONFIGS: dict[str, tuple[str, object]] = {
-    "rules": ("deterministic rules only, no model", _rules_classifier),
     "llm-8b": (f"{FAST}", _llm_classifier(FAST)),
     # Opt-in only: this endpoint serves the 70b at ~48s per call, so a single
     # 128-case config takes ~1.7h. Name it explicitly if you want to pay that.
     "llm-70b": (f"{BIG} (SLOW: ~48s/call on this endpoint)", _llm_classifier(BIG)),
 }
 
-DEFAULT_CONFIGS = ["rules", "llm-8b"]
+DEFAULT_CONFIGS = ["llm-8b"]
 
 
 def run_config(
@@ -172,12 +161,11 @@ def main(argv: list[str]) -> int:
     spreads: dict[str, tuple[list[float], list[float]]] = {}
     for name in names:
         description, classifier = CONFIGS[name]
-        if name != "rules":
-            from ca import llm
+        from ca import llm
 
-            if not llm.available():
-                print(f"skipping {name}: no LLM provider configured")
-                continue
+        if not llm.available():
+            print(f"skipping {name}: no LLM provider configured")
+            continue
         print(f"running {name} ({description}) x{repeat} ...", flush=True)
         runs = []
         for attempt in range(repeat):

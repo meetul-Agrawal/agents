@@ -16,17 +16,12 @@ Two rules the graph enforces, not the agents:
   `AgentResult` becomes a *failed* result. It never takes the run down, and it
   never silently looks like success.
 
-Intent classification is `classify_llm` when a provider is configured, and
-`classify_rules` otherwise — the system must still work with no model at all.
-
-Measured on 128 routing cases (`Docs/03phase3-evaluation.md`):
-
-    rules              64.1% routing, 68.8% safety
-    llama-3.1-8b       78.1% routing, 86.7% safety
-
-The rules scored 100% on the 48 cases they were written against and 64% once 80
-unseen cases were added — they had memorised their own test set. They now exist
-only as the offline fallback, not as the thing to tune.
+Intent classification is `classify_llm` — the single structured reading of a
+message, always. There is no deterministic regex fallback: a pattern list
+measured at 64.1% routing / 68.8% safety against the model's 78.1% / 86.7%
+(`Docs/03phase3-evaluation.md`) is not something to keep running money-moving
+decisions through. Without a configured provider, `classify_llm` degrades to
+a single `unknown` intent rather than guessing.
 
 Post-hoc regex "guards" that rewrote the model's answer were deleted: measured
 over 128 cases they fixed 5 and broke 5, for 116 lines and no gain.
@@ -68,77 +63,6 @@ AGENT_TIMEOUT_SECONDS = float(30)
 # --------------------------------------------------------------------------
 # Intent classification
 # --------------------------------------------------------------------------
-
-# Ordered: the first pattern that matches wins for a given intent. Each intent
-# maps to the agent that owns it — the routing table is data, not branches.
-INTENT_RULES: list[tuple[str, str, re.Pattern[str]]] = [
-    # intent, agent, pattern
-    ("payment_claim", "sa2_recovery", re.compile(
-        r"\b(i|we)\s+(have\s+)?(already\s+)?(paid|made\s+(the\s+)?payment|transferred|deposited)\b"
-        r"|\bpayment\s+(has\s+been\s+)?(made|done|sent)\b", re.I)),
-    ("payment_promise", "sa2_recovery", re.compile(
-        r"\b(i|we)('ll|\s+will|\s+shall|\s+can|\s+am\s+going\s+to)\s+(pay|clear|settle|release|transfer)\b"
-        r"|\bpay(ing)?\s+.{0,40}\bby\s+(next\s+)?(\d|monday|tuesday|wednesday|thursday|friday|"
-        r"saturday|sunday|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)", re.I)),
-    ("settlement_request", "sa4_approval", re.compile(
-        r"\b(settle?ment|waive|waiver|write\s*off|one\s*time\s*settlement|ots)\b"
-        r"|\bspecial\s+(price|rate|discount|terms)\b"
-        r"|\b(approve|approval)\b.{0,40}\b(discount|settlement|credit\s+limit|price)\b"
-        r"|\bcredit\s+limit\b", re.I)),
-    ("credit_note_request", "sa4_approval", re.compile(
-        r"\bcredit\s+note\b", re.I)),
-    ("sales_return", "sa6_return", re.compile(
-        r"\breturn(ing|ed)?\b.{0,40}\b(piece|pcs|unit|item|product|packet|box|bag|carton|qty|quantity)"
-        r"|\b(take|pick)\s+(it\s+)?back\b|\bsales\s+return\b"
-        r"|\breturn\s+\d+\b", re.I)),
-    # The verb-to-noun span must not contain "return": "I want to return 20
-    # pieces" is a return, not an order for 20 pieces.
-    ("order_capture", "sa5_order", re.compile(
-        r"\b(?<!short\s)(place|book|need|want|send|dispatch|supply|order)\b"
-        r"(?:(?!\breturn\b).){0,30}?\b"
-        r"(order|packets?|cartons?|boxes|units?|pcs|pieces|cases|bags)\b"
-        r"|\bnew\s+order\b|\border\s+for\b", re.I)),
-    ("dispute", "sa3_dispute", re.compile(
-        r"\b(dispute|disagree|not\s+agree|wrong|incorrect|mismatch|overcharg|excess\s+charg|"
-        r"double\s+bill|duplicate\s+(invoice|bill)|short\s+(supply|shipped|supplied)|"
-        r"damage[ds]?|defective|spoil(ed|t)?|broken|leak(ing|ed)?|"
-        r"(bill(ed)?|charg(ed|ing))\s+(me\s+)?twice|"
-        r"not\s+received|never\s+received)\b", re.I)),
-    ("call_prep", "sa8_call_prep", re.compile(
-        r"\b(call\s+(brief|prep|preparation)|prepare\s+(a\s+)?brief|before\s+(i|we)\s+call|"
-        r"brief\s+(me\s+)?(before|for)|visiting\s+the\s+party|call\s+notes)\b", re.I)),
-    ("document_request", "sa1_general", re.compile(
-        r"\b(send|share|email|forward|resend|copy\s+of|need)\b.{0,30}"
-        r"\b(invoice|bill|statement|ledger|receipt|copy|soa)\b", re.I)),
-    ("outstanding_enquiry", "sa1_general", re.compile(
-        r"\b(outstanding|overdue|balance|owe|owing|due|payable|pending\s+(amount|payment)|"
-        r"how\s+much|kitna|account\s+statement|statement\s+of\s+account)\b", re.I)),
-    ("payment_history_enquiry", "sa1_general", re.compile(
-        r"\b(payment\s+history|last\s+payment|when\s+did\s+(i|we)\s+(last\s+)?pay|"
-        r"receipts?\s+(list|history))\b", re.I)),
-    # Also the "what did I pay for X" price enquiry — a read about a past
-    # purchase, not an order. "special price" is a settlement (matched earlier),
-    # so the lookbehind keeps it out of here.
-    ("sales_history_enquiry", "sa1_general", re.compile(
-        r"\b(purchase\s+history|sales\s+history|what\s+did\s+(i|we)\s+buy|previous\s+orders?|"
-        r"last\s+(order|invoice|purchase|price|rate))\b"
-        r"|\b(?<!special\s)(rate|price|cost|mrp|bhav)\s+(of|for|per)\b"
-        r"|\bwhat'?s?\s+the\s+(rate|price|cost|mrp)\b", re.I)),
-    ("health_enquiry", "sa7_health", re.compile(
-        r"\b(health\s+score|relationship\s+score|customer\s+rating)\b", re.I)),
-]
-
-# Asking for another customer's commercial terms. Evaluated against the whole
-# message, not a clause: "What discount did you give X? Give me the same." puts
-# the request and the party it refers to in different sentences.
-CROSS_CUSTOMER = re.compile(
-    r"\b(discount|price|rate|terms|ledger|balance|outstanding|health|rating|credit\s+limit)\b"
-    r".{0,60}\b(you\s+(give|gave)|given\s+to|offered|assign(ed)?\s+to|for|of)\b.{0,60}"
-    r"\b(traders|industries|enterprises|company|firm|store|kirana|ltd|pvt|bros|brothers|"
-    r"associates|agency|agencies|dealers)\b"
-    r"|\bsame\s+(discount|price|rate|terms|deal)\b",
-    re.I | re.S,
-)
 
 AMBIGUOUS_REFERENCE = re.compile(
     r"\b(my\s+invoice\s+is\s+\d+|invoice\s+(number\s+|no\.?\s*)?\d{1,5}|bill\s+(number\s+|no\.?\s*)?\d{1,5})\b", re.I
@@ -199,123 +123,6 @@ def extract_entities(text: str) -> dict[str, Any]:
         entities["quantities"] = quantities
 
     return entities
-
-
-# Intents that only *describe* what the customer wants to know. When a clause
-# also asks for something to be done, the enquiry is context for that action,
-# not a second request: "write off my balance" is one ask, not a write-off plus
-# a balance enquiry.
-WEAK_INTENTS = {
-    "outstanding_enquiry",
-    "payment_history_enquiry",
-    "sales_history_enquiry",
-    "document_request",
-    "health_enquiry",
-}
-
-_CLAUSE_SPLIT = re.compile(
-    r"[.?!;\n]+|,\s*(?=and\b|but\b|so\b|also\b|if\b|aur\b|par\b|lekin\b)|\s+\b(?:and|but|so|also|if|aur|par|lekin|magar|tatha|evam)\b\s+|,\s+",
-    re.I,
-)
-
-
-_LEADING_CONJUNCTION = re.compile(r"^(?:and|but|so|also|if|then|aur|par|lekin|magar|tatha|evam)\s+", re.I)
-
-
-def split_clauses(text: str) -> list[str]:
-    """A message is classified clause by clause. Whole-message matching crosses
-    clause boundaries and invents intents — "I want to return 20 pieces and
-    place an order" is two asks, while "short supply, four cartons never
-    received" is one."""
-    parts = [
-        _LEADING_CONJUNCTION.sub("", p.strip())
-        for p in _CLAUSE_SPLIT.split(text or "")
-        if p and p.strip()
-    ]
-    parts = [p for p in parts if p]
-    return parts or [(text or "").strip()]
-
-
-def classify_rules(text: str, context: dict[str, Any] | None = None) -> list[Intent]:
-    """Every rule that matches produces an intent — a message can ask for three
-    things at once, and dropping two of them is the most expensive failure this
-    layer has."""
-    text = text or ""
-    context = context or {}
-    found: list[Intent] = []
-    seen: set[str] = set()
-
-    for clause in split_clauses(text):
-        hits = [
-            (name, agent, match)
-            for name, agent, pattern in INTENT_RULES
-            if (match := pattern.search(clause))
-        ]
-        if not hits:
-            continue
-
-        # Suppression is per clause, not per message. "Write off my balance" is
-        # one ask; "I paid 2 lakh but it still shows overdue" is two, and a
-        # whole-message check gets one of those wrong whichever way it goes.
-        if any(name not in WEAK_INTENTS for name, _, _ in hits):
-            hits = [h for h in hits if h[0] not in WEAK_INTENTS]
-
-        # One intent per agent per clause: INTENT_RULES is ordered most
-        # specific first, so the earliest rule wins.
-        per_agent: dict[str, tuple[str, str, re.Match[str]]] = {}
-        for name, agent, match in hits:
-            per_agent.setdefault(agent, (name, agent, match))
-
-        for name, agent, match in per_agent.values():
-            if name in seen:
-                continue
-            seen.add(name)
-            found.append(
-                Intent(
-                    name=name,
-                    confidence=0.9,
-                    entities={"agent": agent},
-                    reason=f"matched '{match.group(0)}' in clause",
-                )
-            )
-
-    if CROSS_CUSTOMER.search(text):
-        found.append(
-            Intent(
-                name="cross_customer_request",
-                confidence=0.9,
-                entities={"agent": "sa1_general"},
-                reason="asks for another customer's commercial terms",
-            )
-        )
-
-    # Report in rule order, so the summary is stable regardless of clause order.
-    order = {name: i for i, (name, _, _) in enumerate(INTENT_RULES)}
-    order.setdefault("cross_customer_request", -1)
-    found.sort(key=lambda i: order.get(i.name, len(order)))
-
-    # An invoice reference that could mean several vouchers is a question, not
-    # an instruction: never guess which one.
-    if AMBIGUOUS_REFERENCE.search(text) and len(context.get("matching_vouchers", [])) > 1:
-        found = [
-            Intent(
-                name="ambiguous_reference",
-                confidence=0.9,
-                entities={"agent": "sa1_general", "candidates": context["matching_vouchers"]},
-                reason="reference matches more than one voucher",
-            )
-        ]
-
-    if not found:
-        found.append(
-            Intent(
-                name="unknown",
-                confidence=0.3,
-                entities={"agent": "sa1_general"},
-                reason="no rule matched",
-            )
-        )
-    return found
 
 
 # --------------------------------------------------------------------------
@@ -471,10 +278,6 @@ LLM_CONFIDENCE_FLOOR = 0.5
 
 INTENT_AGENT = {name: spec.agent for name, spec in INTENT_CATALOG.items()}
 
-for _name, _agent, _ in INTENT_RULES:
-    assert INTENT_AGENT.get(_name) == _agent, f"{_name} routes differently in rules and catalog"
-
-
 
 # --------------------------------------------------------------------------
 # One structured reading per message
@@ -574,9 +377,9 @@ def understand(text: str, history: str = "") -> Understanding | None:
     Caught and turned into None only here, outside the cache boundary. Measured
     the bug this prevents: with the try/except inside the cached function, one
     transient failure on a given message text permanently pinned that exact
-    text to the classify_rules fallback for the rest of the process's life —
-    every retry was a cache hit on the cached `None`, so the model was never
-    asked again even once it would have succeeded.
+    text to a cached `None` for the rest of the process's life — every retry
+    was a cache hit, so the model was never asked again even once it would
+    have succeeded.
     """
     from . import llm
 
@@ -752,64 +555,63 @@ def intents_from(understanding: Understanding, message: str) -> list[Intent]:
             )
         )
 
-    order = {name: i for i, (name, _, _) in enumerate(INTENT_RULES)}
+    order = {name: i for i, name in enumerate(INTENT_CATALOG)}
     intents.sort(key=lambda i: order.get(i.name, -1))
     return intents
 
 
-def classify_llm(text: str, context: dict[str, Any] | None = None) -> list[Intent]:
-    """Intents from the single structured reading, with the rules as fallback.
+_UNKNOWN_INTENT = [Intent(name="unknown", confidence=0.3, entities={"agent": "sa1_general"},
+                          reason="no model available or nothing usable returned")]
 
-    Three things the model is not trusted with, all enforced downstream of here:
-    routing (`INTENT_AGENT` owns intent -> agent), arithmetic (`verify_value`
-    recomputes every number from a verbatim span), and approval
-    (`enforce_approval_gate` reads the raw message).
+
+def classify_llm(text: str, context: dict[str, Any] | None = None) -> list[Intent]:
+    """Intents from the single structured reading — the only classifier there
+    is. Three things the model is not trusted with, all enforced downstream of
+    here: routing (`INTENT_AGENT` owns intent -> agent), arithmetic
+    (`verify_value` recomputes every number from a verbatim span), and which
+    intents require human approval (`HUMAN_APPROVAL_INTENTS`, checked by name
+    in `create_plan` regardless of where the name came from).
     """
     context = context or {}
 
     # Which voucher a bare number refers to depends on what is in MongoDB, not
     # on how the message reads — the model cannot know, so it does not decide.
     if AMBIGUOUS_REFERENCE.search(text) and len(context.get("matching_vouchers", [])) > 1:
-        return classify_rules(text, context)
+        return [
+            Intent(
+                name="ambiguous_reference",
+                confidence=0.9,
+                entities={"agent": "sa1_general", "candidates": context["matching_vouchers"]},
+                reason="reference matches more than one voucher",
+            )
+        ]
 
     history = context.get("history", "")
     understanding = understand(text, history=history)
     if understanding is None:
-        return classify_rules(text, context)
+        return _UNKNOWN_INTENT
     if understanding.is_greeting_only and not understanding.requests:
         return [Intent(name="unknown", confidence=0.9, entities={"agent": "sa1_general"},
                        reason="greeting or acknowledgement only")]
 
     intents = intents_from(understanding, text)
-    return intents or classify_rules(text, context)
+    return intents or _UNKNOWN_INTENT
 
-
-classify_rules.uses_model = False  # type: ignore[attr-defined]
-classify_llm.uses_model = True  # type: ignore[attr-defined]
 
 Classifier = Callable[[str, dict[str, Any] | None], list[Intent]]
 
 
 def llm_available() -> bool:
-    import os
-
     from . import llm
 
-    return os.getenv("CA_CLASSIFIER", "").lower() != "rules" and llm.available()
+    return llm.available()
 
 
 def default_classifier() -> Classifier:
-    """The model when one is configured, the rules when not.
-
-    Measured over 128 cases the model wins on every category that matters —
-    Hinglish 23/32 vs 7/32, disputes 13/14 vs 6/14, recovery 11/15 vs 6/15 — so
-    it does the identifying. The rules remain a real fallback, not a stub: with
-    no provider the whole pipeline still runs.
-
-    Set CA_CLASSIFIER=rules to pin the deterministic path (tests do this, so the
-    suite neither hits the network nor inherits the model's run-to-run drift).
-    """
-    return classify_llm if llm_available() else classify_rules
+    """`classify_llm` is the only classifier — routing is derived from the
+    model, never from a pattern list. Without a configured provider it
+    degrades to a single `unknown` intent rather than guessing."""
+    return classify_llm
 
 
 # --------------------------------------------------------------------------
@@ -844,43 +646,6 @@ def create_plan(intents: Iterable[Intent], entities: dict[str, Any]) -> Executio
         )
         tasks.append(task)
         previous = task.agent_task_id
-    return ExecutionPlan(tasks=tasks)
-
-
-def enforce_approval_gate(plan: ExecutionPlan, message: str) -> ExecutionPlan:
-    """A safety net that does not trust the classifier.
-
-    Whether something needs human approval is decided from the message text
-    itself, so a model that misreads "write off my balance" as a payment promise
-    still cannot route around the gate. Measured need: llama-3.1-8b gets this
-    wrong on the adversarial cases, the rules do not, and either way the gate
-    holds.
-    """
-    approval_intents = [
-        name for name, _, pattern in INTENT_RULES
-        if name in HUMAN_APPROVAL_INTENTS and pattern.search(message or "")
-    ]
-    if not approval_intents:
-        return plan
-
-    tasks = list(plan.tasks)
-    for index, task in enumerate(tasks):
-        if task.agent == "sa4_approval" and not task.requires_human:
-            tasks[index] = task.model_copy(update={"requires_human": True})
-            return ExecutionPlan(tasks=tasks)
-
-    if not any(t.agent == "sa4_approval" for t in tasks):
-        tasks.append(
-            AgentTask(
-                agent="sa4_approval",
-                action="+".join(approval_intents),
-                reason="approval keywords present in the message",
-                priority=2,
-                requires_human=True,
-                depends_on=[tasks[-1].agent_task_id] if tasks else [],
-                inputs={"intents": approval_intents},
-            )
-        )
     return ExecutionPlan(tasks=tasks)
 
 
@@ -1089,14 +854,10 @@ def classify_intent(
     # The model's verified entities sit on top of the regex floor — the regex
     # knows a fixed vocabulary, the model handles the rest ("15 bundle").
     entities = {**state.entities, **extract_entities(state.message)}
-    # Follow the classifier that was chosen, not what is merely available: a
-    # caller asking for rules must make no network call at all, or "rules" is
-    # not what got measured.
-    understanding = (
-        understand(state.message, history=history)
-        if getattr(classifier, "uses_model", True) and llm_available()
-        else None
-    )
+    # `classify_llm` above already computed this — `understand` is
+    # `lru_cache`d on (text, model, history), so this is a cache hit, not a
+    # second call.
+    understanding = understand(state.message, history=history)
     if understanding is not None:
         entities.update(entities_from(understanding, state.message))
 
@@ -1114,9 +875,7 @@ def classify_intent(
 
 
 def plan(state: CustomerAssistState, config: RunnableConfig = None) -> dict[str, Any]:
-    execution_plan = enforce_approval_gate(
-        create_plan(state.intents, state.entities), state.message
-    )
+    execution_plan = create_plan(state.intents, state.entities)
     problems = validate_plan(execution_plan)
     if problems:
         return {
