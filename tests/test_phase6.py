@@ -73,6 +73,39 @@ def case_recorder(monkeypatch):
     return cases, events
 
 
+# --------------------------------------------------------------------------
+# Dispute classification — model-provided, regex only as the offline fallback
+# --------------------------------------------------------------------------
+
+
+def test_dispute_signal_prefers_the_model_entity_over_any_keyword_check():
+    """A message with no balance keyword, but the model says about_balance —
+    the model wins; there is no pattern list to overrule it."""
+    about_balance, label = sa3._dispute_signal(
+        {"dispute_about_balance": True, "dispute_issue": "the ledger looks off"},
+        "something feels wrong with my account",
+    )
+    assert about_balance is True and label == "the ledger looks off"
+
+
+def test_dispute_signal_falls_back_to_keywords_only_when_the_model_did_not_run():
+    """No `dispute_about_balance` key at all — this is the classify_rules path
+    (no LLM configured), and the only thing preserved offline is the balance
+    distinction; no issue label is invented."""
+    about_balance, label = sa3._dispute_signal({}, "the balance on my account is wrong")
+    assert about_balance is True and label is None
+
+    about_balance, label = sa3._dispute_signal({}, "the goods arrived broken")
+    assert about_balance is False and label is None
+
+
+def test_dispute_signal_offline_fallback_covers_infinite_wording_only_via_balance_keyword():
+    """Anything that is not recognisably about the balance defaults to asking
+    for specifics offline — safe in every case, since it never dumps a figure."""
+    about_balance, _ = sa3._dispute_signal({}, "there was a problem with what I received")
+    assert about_balance is False
+
+
 def test_dispute_over_a_real_invoice_states_what_is_on_record(case_recorder, monkeypatch):
     """Price/quantity dispute: the cited invoice exists — SA-3 states its real
     figures, never a verdict on whether the customer is right."""
@@ -548,3 +581,45 @@ def test_resolution_message_never_invents_a_figure(monkeypatch):
     monkeypatch.setattr(sa1, "_llm_phrase", lambda template: template + " Refund of ₹999,999.00.")
     msg = sa3.resolution_message(case, "solved")
     assert "999,999.00" not in msg
+
+
+# --------------------------------------------------------------------------
+# Real model call — the point of this whole change: no pattern list needed
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="session")
+def llm_available():
+    from ca import llm
+
+    if not llm.available():
+        pytest.skip("no LLM provider configured")
+    return llm
+
+
+@pytest.mark.parametrize("message", [
+    "the packets I got were leaking and smelled off",
+    "half the crates arrived crushed, forklift must have dropped them",
+    "the labels on the boxes were peeling off and unreadable",
+])
+def test_llm_classifies_novel_damage_phrasing_no_regex_was_ever_written_for(llm_available, message):
+    """The actual point of this change: three phrasings for goods-condition
+    complaints that appear in no pattern list anywhere in this codebase. If
+    this only worked via regex, all three would need a new pattern; the model
+    call needs none."""
+    from ca.orchestrator import entities_from, understand
+
+    understanding = understand(message)
+    assert understanding is not None
+    entities = entities_from(understanding, message)
+    assert entities.get("dispute_about_balance") is False
+
+
+def test_llm_classifies_a_balance_complaint_as_about_balance(llm_available):
+    from ca.orchestrator import entities_from, understand
+
+    message = "the outstanding figure you've shown me does not look right"
+    understanding = understand(message)
+    assert understanding is not None
+    entities = entities_from(understanding, message)
+    assert entities.get("dispute_about_balance") is True

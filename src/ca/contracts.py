@@ -414,6 +414,16 @@ class Request(ModelOutput):
     due_date_text: str | None = None
     reason: str = ""
 
+    # Dispute-only, and both purely descriptive — neither gates a deterministic
+    # decision or states a fact about money, so they carry none of the risk a
+    # hallucinated amount or voucher would. `about_balance` is the one field
+    # that does steer SA-3's evidence path (invoice lookup vs. the account's
+    # own outstanding position), and being wrong either way is safe: it can
+    # only pick between two grounded, tool-read answers, never invent one.
+    about_balance: bool = False
+    issue_label: str | None = None
+    item_mentioned: str | None = None
+
 
 class Understanding(ModelOutput):
     """The single structured reading of one inbound message. Intents, entities,

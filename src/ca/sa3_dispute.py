@@ -40,6 +40,16 @@ A case is resolved by a human (`services.resolve_case`, driven from the ops UI
 the customer-facing follow-up for that decision; it is templated and grounded
 the same way every other reply here is, and it is the caller's job to actually
 deliver it (`services.send_customer_message`) once a conversation is known.
+
+What the complaint is actually about — a damaged-goods issue vs. a balance
+issue vs. anything else — comes from `orchestrator.understand()`, the same
+single structured LLM call that already classified the message as a dispute
+in the first place (`Request.about_balance` / `.issue_label` /
+`.item_mentioned`, threaded through as `entities["dispute_*"]`). No regex here
+tries to enumerate every way a customer might describe a problem — that list
+is open-ended, which is exactly the kind of judgement call a model handles and
+a pattern list cannot. A small keyword fallback remains for when no model ran
+at all (`classify_rules`); see `_offline_dispute_signal`.
 """
 
 from __future__ import annotations
@@ -52,31 +62,22 @@ from . import services
 from .contracts import AgentResult, AgentTask, Case, CustomerAssistState, ProposedAction, ToolCall
 from .sa1_general import _fmt_date, _inr, _match_product, _phrase, _read
 
-# What the complaint is actually about — used to (a) label the case so a human
-# reviewing the queue can see the issue at a glance, and (b) decide whether the
-# account balance is relevant evidence at all. Reuses the same vocabulary
-# `orchestrator.INTENT_RULES`/`sa4_approval` already treat as domain signal,
-# not phrasing invented for any particular test message.
-_ISSUE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("damaged or defective goods", re.compile(
-        r"\b(damage|damaged|defective|spoil(ed)?|broken|leak(ing)?|expired|faulty|quality)\b", re.I)),
-    ("short or missing supply", re.compile(
-        r"\b(short\s*(supply|shipped|delivered)?|shortage|missing|not\s+received|"
-        r"never\s+received|less\s+(qty|quantity|pieces|units))\b", re.I)),
-    ("wrong item supplied", re.compile(r"\b(wrong\s+(item|product|goods)|different\s+item)\b", re.I)),
-    ("duplicate billing", re.compile(r"\b(duplicate|billed\s+twice|charged\s+twice)\b", re.I)),
-    ("incorrect rate or charge", re.compile(
-        r"\b(rate|price|overcharg\w*|excess\s+charg\w*|wrong\s+(bill|invoice|amount|charge))\b", re.I)),
-]
-# Only this one makes the account balance itself the relevant evidence.
-_BALANCE_DISPUTE = re.compile(r"\b(balance|ledger|outstanding|statement|hisab)\b", re.I)
+# ponytail: offline-only fallback. When no model ran (`classify_rules`, no
+# provider configured) there is no `Request.about_balance` to read, so this is
+# the one thing worth distinguishing without one: a balance complaint (where
+# the balance IS the evidence) from everything else (where SA-3 must ask,
+# never guess). It does not attempt an issue label — degraded nuance, not a
+# degraded safety property.
+_BALANCE_DISPUTE_FALLBACK = re.compile(r"\b(balance|ledger|outstanding|statement|hisab)\b", re.I)
 
 
-def _issue_kind(message: str) -> str | None:
-    for label, pattern in _ISSUE_PATTERNS:
-        if pattern.search(message or ""):
-            return label
-    return "account balance" if _BALANCE_DISPUTE.search(message or "") else None
+def _dispute_signal(entities: dict[str, Any], message: str) -> tuple[bool, str | None]:
+    """(about_balance, issue_label) for this dispute. Reads the model's own
+    classification when available; only falls back to the keyword check when
+    no model ran at all."""
+    if "dispute_about_balance" in entities:
+        return bool(entities["dispute_about_balance"]), entities.get("dispute_issue")
+    return bool(_BALANCE_DISPUTE_FALLBACK.search(message or "")), None
 
 
 def _find(rows: list[dict[str, Any]], voucher_number: str) -> dict[str, Any] | None:
@@ -194,13 +195,14 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     cid = state.customer_id
     calls: list[ToolCall] = []
     voucher_numbers = entities.get("voucher_numbers") or []
-    issue = _issue_kind(state.message)
+    about_balance, issue_label = _dispute_signal(entities, state.message)
+    item_hint = entities.get("dispute_item")
 
     # Nothing concrete to check: no invoice cited, and the complaint is not
     # about the balance itself (where the balance IS the relevant evidence).
     # Ask for the specifics instead of opening an empty case or answering with
     # an unrelated figure — this is the fix for the ₹1+ crore balance dump.
-    if not voucher_numbers and issue != "account balance":
+    if not voucher_numbers and not about_balance:
         ask = (
             "Thanks for letting us know — to look into this, could you share the invoice "
             "number, which item was affected, and a short description of the issue (for "
@@ -209,11 +211,13 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         )
         return result("needs_information", _phrase(ask), calls)
 
-    evidence = _voucher_evidence(cid, voucher_numbers, state.message, calls) if voucher_numbers else \
-        _outstanding_evidence(cid, calls)
+    evidence = (
+        _voucher_evidence(cid, voucher_numbers, item_hint or state.message, calls)
+        if voucher_numbers else _outstanding_evidence(cid, calls)
+    )
 
     priority = "high" if state.urgency == "high" else "normal"
-    label = issue or (', '.join(voucher_numbers) if voucher_numbers else 'account query')
+    label = issue_label or (', '.join(voucher_numbers) if voucher_numbers else 'account query')
     title = f"Dispute — {label}"
     case, created = services.create_case(
         cid, title, priority=priority, evidence=evidence,

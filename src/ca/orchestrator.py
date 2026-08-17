@@ -55,6 +55,7 @@ from .contracts import (
     ExtractedValue,
     Intent,
     ProposedAction,
+    Request,
     Understanding,
     utcnow,
 )
@@ -338,8 +339,9 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     "outstanding_enquiry": IntentSpec(
         agent="sa1_general",
         means="wants to know the amount currently owed, or the state of their account",
-        not_when="the balance is only context for another request, or they are "
-                 "reporting a payment or promising one",
+        not_when="the balance is only context for another request, they are reporting a "
+                 "payment or promising one, or they assert the figure they were shown is "
+                 "incorrect — that is a dispute, not an enquiry",
     ),
     "document_request": IntentSpec(
         agent="sa1_general",
@@ -377,8 +379,10 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
               "This covers what was charged (price, tax, a charge never agreed, a "
               "duplicated entry, an amount booked against the wrong account) and what "
               "arrived (less than was billed, nothing at all, or goods damaged, "
-              "defective or not what was ordered). A shortfall between what was "
-              "invoiced and what was received is always this",
+              "defective or not what was ordered), and the account balance or ledger "
+              "figure itself if they say it is wrong rather than merely asking what it "
+              "is. A shortfall between what was invoiced and what was received is "
+              "always this",
         not_when="the goods arrived as ordered and are simply being sent back",
     ),
     "sales_return": IntentSpec(
@@ -524,7 +528,10 @@ EXTRACTION_RULES = (
     "bottles, jackets, cartons.\n"
     "- voucher_ref: an invoice or bill number copied verbatim.\n"
     "- due_date_text: any date or deadline phrase, copied verbatim.\n"
-    "Never write a number that does not appear in the message. Omit the field "
+    "- for a dispute: about_balance (true only if the complaint is about the "
+    "balance/ledger figure itself), issue_label (your own short phrase for "
+    "what is wrong), item_mentioned (the product named, if any).\n"
+    "Never write a number that does not appear in the message. Omit a field "
     "instead of guessing."
 )
 
@@ -576,7 +583,10 @@ def _understand(text: str, model: str) -> Understanding | None:
                         "voucher_ref": None,
                         "due_date_text": None,
                         "reason": "customer asserts a completed transfer",
-                    }
+                        "about_balance": False,
+                        "issue_label": None,
+                        "item_mentioned": None,
+                    },
                 ],
             },
         )
@@ -584,13 +594,35 @@ def _understand(text: str, model: str) -> Understanding | None:
         return None
 
 
+def _clause_grounded(clause: str, message: str) -> bool:
+    """A `Request` is only as trustworthy as the clause it claims to come from.
+
+    Measured need: a two-shot version of the extraction prompt caused
+    llama-3.1-8b to fabricate an entire extra request by copying one example's
+    `clause` verbatim — confidence 0.9, words that never appeared in the real
+    message. `verify_value` already stops a hallucinated *amount* from
+    reaching an agent; this is the same defence for the request as a whole; a
+    clause with no real overlap with the message is dropped before it can seed
+    an intent or any entity, model-provided fields (`about_balance`,
+    `issue_label`, ...) included.
+    """
+    words = {w for w in re.findall(r"[a-z0-9]+", (clause or "").lower()) if len(w) > 2}
+    if not words:
+        return True  # nothing to check — do not punish an empty clause
+    msg_words = set(re.findall(r"[a-z0-9]+", (message or "").lower()))
+    return len(words & msg_words) / len(words) >= 0.5
+
+
 def entities_from(understanding: Understanding, message: str) -> dict[str, Any]:
     """Verified entities only, ordered by where they appear in the message."""
     amounts: list[tuple[int, float]] = []
     quantities: list[tuple[int, float]] = []
     vouchers: list[str] = []
+    dispute: Request | None = None
 
     for request in understanding.requests:
+        if not _clause_grounded(request.clause, message):
+            continue
         for claim, bucket in ((request.amount, amounts), (request.quantity, quantities)):
             value = verify_value(claim, message)
             if value is not None:
@@ -598,6 +630,8 @@ def entities_from(understanding: Understanding, message: str) -> dict[str, Any]:
         ref = (request.voucher_ref or "").strip()
         if ref and ref.lower() in message.lower() and ref not in vouchers:
             vouchers.append(ref)
+        if request.intent == "dispute" and dispute is None:
+            dispute = request
 
     def ordered(pairs: list[tuple[int, float]]) -> list[float]:
         seen: set[tuple[int, float]] = set()
@@ -611,6 +645,18 @@ def entities_from(understanding: Understanding, message: str) -> dict[str, Any]:
         found["quantities"] = [int(q) if q == int(q) else q for q in ordered(quantities)]
     if vouchers:
         found["voucher_numbers"] = sorted(set(vouchers))
+    if dispute is not None:
+        # `about_balance` gates which grounded, tool-read evidence SA-3 shows —
+        # never a monetary fact by itself, so it needs no verbatim check.
+        # `issue_label` is the model's own paraphrase, not an extraction, so
+        # there is nothing to check it against. `item_mentioned` is dropped
+        # unless it actually appears in the message.
+        found["dispute_about_balance"] = dispute.about_balance
+        if dispute.issue_label:
+            found["dispute_issue"] = dispute.issue_label
+        item = (dispute.item_mentioned or "").strip()
+        if item and item.lower() in message.lower():
+            found["dispute_item"] = item
     return found
 
 
@@ -621,7 +667,8 @@ def intents_from(understanding: Understanding, message: str) -> list[Intent]:
     intents: list[Intent] = []
     for request in understanding.requests:
         agent = INTENT_AGENT.get(request.intent)
-        if agent is None or request.confidence < LLM_CONFIDENCE_FLOOR or request.intent in seen:
+        if (agent is None or request.confidence < LLM_CONFIDENCE_FLOOR or request.intent in seen
+                or not _clause_grounded(request.clause, message)):
             continue
         seen.add(request.intent)
         intents.append(

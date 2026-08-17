@@ -708,6 +708,42 @@ def test_model_does_not_choose_the_agent():
     assert intents[0].entities["agent"] == "sa6_return"
 
 
+def test_dispute_classification_comes_from_the_model_not_a_pattern_list():
+    """The whole point of Request.about_balance/issue_label: SA-3 reads these
+    off the same structured call, no regex enumerating complaint types."""
+    from ca.contracts import Request, Understanding
+
+    understanding = Understanding(requests=[
+        Request(intent="dispute", about_balance=False, issue_label="packaging was torn open",
+               item_mentioned="rice bags"),
+    ])
+    entities = orc.entities_from(understanding, "the rice bags arrived with torn packaging")
+    assert entities["dispute_about_balance"] is False
+    assert entities["dispute_issue"] == "packaging was torn open"
+    assert entities["dispute_item"] == "rice bags"
+
+
+def test_dispute_item_not_in_the_message_is_dropped():
+    """item_mentioned is a paraphrase claim, not a verified figure — but it
+    still must not introduce a name the customer never wrote."""
+    from ca.contracts import Request, Understanding
+
+    understanding = Understanding(requests=[
+        Request(intent="dispute", about_balance=False, item_mentioned="some other product"),
+    ])
+    entities = orc.entities_from(understanding, "the item I ordered was faulty")
+    assert "dispute_item" not in entities
+
+
+def test_dispute_about_balance_flag_is_always_present_when_disputed():
+    from ca.contracts import Request, Understanding
+
+    understanding = Understanding(requests=[Request(intent="dispute", about_balance=True)])
+    entities = orc.entities_from(understanding, "my balance looks wrong")
+    assert entities["dispute_about_balance"] is True
+    assert "dispute_issue" not in entities  # no label given, nothing invented
+
+
 def test_unknown_intent_name_from_the_model_is_dropped():
     from ca.contracts import Request, Understanding
 
