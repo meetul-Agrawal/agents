@@ -162,7 +162,7 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "sales_history_enquiry": IntentSpec(
         agent="sa1_general",
-        means="asks what is the price, rate, cost, or bhav of a product, or wants the record of what they bought in the past",
+        means="asks what is the price, rate, cost, or bhav of a product, wants to check the rate of an item, or wants the record of past purchases",
         not_when="they are asking to place an order or buy goods",
     ),
     "payment_promise": IntentSpec(
@@ -426,21 +426,7 @@ def _understand(text: str, model: str, history: str = "") -> Understanding:
             "language": "hinglish",
             "is_greeting_only": False,
             "refers_to_other_party": None,
-            "requests": [
-                {
-                    "intent": "payment_claim",
-                    "clause": "NEFT kar diya hai 1,50,000 ka",
-                    "confidence": 0.95,
-                    "amount": {"text": "1,50,000", "value": 150000, "unit": None},
-                    "quantity": None,
-                    "voucher_ref": None,
-                    "due_date_text": None,
-                    "reason": "customer asserts a completed transfer",
-                    "about_balance": False,
-                    "issue_label": None,
-                    "item_mentioned": None,
-                },
-            ],
+            "requests": [],
         },
     )
 

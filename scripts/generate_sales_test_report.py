@@ -67,6 +67,66 @@ def main():
             "scenario": "Specific Item Rate Check (Idli Mix)",
             "query": "What rate was charged for Idli Mix 500gm on my last bill?",
             "expectation": "Extracts Idli Mix 500gm, returns latest price (₹60.00/Pcs)."
+        },
+        {
+            "id": 11,
+            "scenario": "Typo in Product Name ('satu aata' instead of Sattu Aata)",
+            "query": "satu aata 500g ka rate kya tha last bill me",
+            "expectation": "Correctly matches (1124) Gangwal Sattu Aata 500gm and provides latest rate (₹47.00/Pcs)."
+        },
+        {
+            "id": 12,
+            "scenario": "Phonetic Spelling / Slang ('khaman miks', 'kitne me diya')",
+            "query": "khaman miks 500gm kitne me diya tha pichli bar?",
+            "expectation": "Matches (0028) Gangwal Khaman Mix 500gm and returns latest rate (₹62.00/Pcs)."
+        },
+        {
+            "id": 13,
+            "scenario": "Informal Invoices Request in Hindi ('purane sales bills dikhao')",
+            "query": "mere purane sales bills dikhao jo last month ke the",
+            "expectation": "Understands sales invoices request and presents recent bill records."
+        },
+        {
+            "id": 14,
+            "scenario": "Typo in Item Name ('makka ata' instead of Makka Aata)",
+            "query": "makka ata 1 kg ka price btao",
+            "expectation": "Matches (0509) Gangwal Makka Aata 1kg and gives latest rate (₹29.00/Pcs)."
+        },
+        {
+            "id": 15,
+            "scenario": "Local Trade Terminology ('bhav' + typo 'beson')",
+            "query": "beson sada 1kg ka kya bhav lagaya tha?",
+            "expectation": "Understands 'bhav' as rate check, matches (0547) Gangwal Besan Sada 1kg (₹79.00/Pcs)."
+        },
+        {
+            "id": 16,
+            "scenario": "Spelling Variation ('chaval aata' instead of Chawal Aata)",
+            "query": "chaval aata 500gm ka last rate check krna h",
+            "expectation": "Matches (0677) Gangwal Chawal Aata 500gm (₹20.00/Pcs)."
+        },
+        {
+            "id": 17,
+            "scenario": "Ambiguous Partial Name with Typo ('bhajiya mix')",
+            "query": "bhajiya mix ka price kya h",
+            "expectation": "Detects ambiguity between Bhajiya Mix 500gm and Mung Bhajiya Mix 500gm, asking customer to clarify."
+        },
+        {
+            "id": 18,
+            "scenario": "Multiple Typos in Brand and Item ('gangwl poaha')",
+            "query": "what was the cost of gangwl poaha 1kg in previous delivery?",
+            "expectation": "Identifies (1803) Gangwal Poha 1kg and returns latest invoice rate (₹52.00/Pcs)."
+        },
+        {
+            "id": 19,
+            "scenario": "Multi-Intent Message with Slang ('mera balance kitna h aur dosa miks ka rate btao')",
+            "query": "mera balance kitna h aur dosa miks ka rate btao",
+            "expectation": "Answers both outstanding amount and Dosa Mix 500gm rate (₹75.00/Pcs) in a single unified message."
+        },
+        {
+            "id": 20,
+            "scenario": "Conversational Query with Invoice Number Request",
+            "query": "last bill me bajra aata 1kg ka kya rate laga tha invoice no k sath",
+            "expectation": "Matches (0516) Gangwal Bajra Aata 1kg, reports latest rate (₹30.00/Pcs) and exact invoice reference."
         }
     ]
 
@@ -82,7 +142,7 @@ def main():
         "",
         "## Test Summary Table",
         "",
-        "| # | Scenario | Query | Classified Intent(s) | Status | Result Summary |",
+        "| # | Scenario | Query | Classified Intent(s) | Status | Full Agent Response |",
         "|---|---|---|---|---|---|"
     ]
 
@@ -101,12 +161,10 @@ def main():
         intents_str = ", ".join(f"`{i}`" for i in summary["intents"])
         agents_str = ", ".join(f"`{a}`" for a in summary["agents"])
         statuses_str = ", ".join(summary["statuses"])
-        response_preview = (state.final_response or "").replace("\n", " ").strip()
-        if len(response_preview) > 60:
-            response_preview = response_preview[:57] + "..."
+        full_response = (state.final_response or "").replace("\n", "<br>").replace("|", "\\|").strip()
 
         status_badge = "✅ Pass" if summary["statuses"] in (["completed"], ["needs_information"]) else "❌ Fail"
-        report_lines.append(f"| {q_id} | {q_scen} | \"{q_text}\" | {intents_str} | {status_badge} | {response_preview} |")
+        report_lines.append(f"| {q_id} | {q_scen} | \"{q_text}\" | {intents_str} | {status_badge} | {full_response} |")
 
         sec = [
             f"### Test {q_id}: {q_scen}",
