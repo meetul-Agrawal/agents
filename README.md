@@ -169,7 +169,11 @@ unrelated payment (`test_claim_with_no_amount_does_not_confirm_an_unrelated_rece
 **SA-3 (dispute)** gathers evidence from the same read tools SA-1 uses — a
 cited invoice's real figures, or the fact that it does not exist on the
 account at all — and opens a case. It states what the records show and never
-who is at fault; determining that is a human's job.
+who is at fault; determining that is a human's job. What the complaint is
+about (balance vs. goods vs. anything else) is read from the model's own
+classification (`Understanding.requests[].about_balance`/`.issue_label`) —
+there is no pattern list of complaint wording; with no model available it
+defaults to asking for specifics rather than guessing.
 
 **SA-4 (approval)** gathers context (outstanding, settlement speed, prior
 approvals) and raises a *pending* approval request with a grounded
@@ -177,7 +181,31 @@ recommendation. It can never approve or execute anything itself:
 `services.create_approval` always writes `status="pending"`, and the only
 function that can change that (`services.decide_approval`) is never called
 from agent code. `create_approval` is an auto-mode tool; `update_approval` is
-human_approval-mode and appears nowhere in SA-4.
+human_approval-mode and appears nowhere in SA-4. Which of the six approval
+categories a request is (`special_discount`, `settlement`, `credit_limit`,
+`large_credit_note`, `write_off`, `exceptional_terms`) is likewise read from
+the model's classification, not matched against wording — `settlement` is
+the only fixed default, used when the model named nothing more specific.
+
+### Composing replies without a template — and where that stops
+
+SA-3 and SA-4's customer-facing text is not built from a fixed f-string filled
+in with values (SA-1's approach). `sa1_general.compose_grounded(instruction,
+facts)` hands the model a small JSON dict of already-verified facts and asks
+it to write the whole reply, then applies the same `_grounded` check SA-1's
+rewrite uses: reject the reply if it states any number or reference the facts
+don't contain. No provider configured, or the candidate fails grounding →
+`None`, and the caller falls back to one minimal, hand-written line.
+
+One thing is deliberately kept out of the model's hands even here: the
+approve/reject and solved/dropped verdict itself. Measured this model stating
+the opposite decision inside an otherwise-correct reply ("...has been
+approved. However, ... it was not approved.") — `_grounded` only checks
+figures, not decision polarity, so nothing catches that. `decision_message`
+and `resolution_message` fix that one sentence in code, driven by the bool/
+string that already came from `services.decide_approval`/`resolve_case` —
+never phrased by the model — and let `compose_grounded` write only the
+trailing note, which is shown no outcome fact to contradict.
 
 Both SA-2 and SA-3/SA-4 write through `services.py`, which is idempotent on
 `message_id`: a replayed message re-finds its own promise/case/approval
