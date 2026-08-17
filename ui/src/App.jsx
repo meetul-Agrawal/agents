@@ -389,18 +389,23 @@ export default function App() {
   const [input,      setInput]      = useState('')
   const [classifier, setClassifier] = useState('llm')
   const [cls,        setCls]        = useState(null)
-  const [customerId, setCustomerId] = useState('')
   const [loading,    setLoading]    = useState(false)
   const [lastInput,  setLastInput]  = useState('')
   const [allIntents, setAllIntents] = useState([])
   const [selectedId, setSelectedId] = useState(null)
   const bottomRef = useRef(null)
 
+  // New-thread customer selection (only used when creating, not global)
+  const [newThreadCustId, setNewThreadCustId] = useState('')
+
   const [leftTab,   setLeftTab]   = useState('threads') // 'threads' | 'approvals' | 'disputes'
   const [approvals, setApprovals] = useState([])
   const [disputes,  setDisputes]  = useState([])
   const [selApproval, setSelApproval] = useState(null)
   const [selDispute,  setSelDispute]  = useState(null)
+
+  // The active conversation's customer_id — read from the conversation object, not editable.
+  const customerId = activeConv?.customer_id || ''
 
   function refreshApprovals() {
     api.get('/api/approvals').then(rows => {
@@ -456,11 +461,13 @@ export default function App() {
   }, [messages])
 
   async function newThread() {
-    const conv = await api.post('/api/conversations', { customer_id: customerId || null })
+    if (!newThreadCustId) return  // require customer selection
+    const conv = await api.post('/api/conversations', { customer_id: newThreadCustId })
     setConvs(prev => [conv, ...prev])
     setActiveConv(conv)
     setMessages([])
     setCls(null)
+    setNewThreadCustId('')  // reset picker for next creation
   }
 
   async function send() {
@@ -503,7 +510,15 @@ export default function App() {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() }
   }
 
+  // Look up display name for the active conversation's customer
   const activeCustomer = customers.find(c => c.customer_id === customerId)
+
+  // Helper: look up customer display name by id (for thread list)
+  function custName(cid) {
+    if (!cid) return null
+    const c = customers.find(c => c.customer_id === cid)
+    return c ? c.display_name : '…' + cid.slice(-8)
+  }
 
   return (
     <div className="layout">
@@ -525,18 +540,27 @@ export default function App() {
         {leftTab === 'threads' && (
           <>
             <div className="left-header">
-              <label>Customer ({customers.length})</label>
-              <CustomerPicker customers={customers} value={customerId} onChange={setCustomerId} />
+              <label>New thread — select customer</label>
+              <CustomerPicker customers={customers} value={newThreadCustId} onChange={setNewThreadCustId} />
             </div>
-            <button className="new-btn" onClick={newThread}>+ New Thread</button>
+            <button
+              className="new-btn"
+              onClick={newThread}
+              disabled={!newThreadCustId}
+              title={newThreadCustId ? 'Create thread' : 'Select a customer first'}
+            >+ New Thread</button>
             <div className="conv-list">
               {convs.length === 0 && <div className="empty-list">No threads yet</div>}
               {convs.map(c => (
                 <div key={c.conversation_id}
                   className={`conv-item${activeConv?.conversation_id === c.conversation_id ? ' active' : ''}`}
                   onClick={() => setActiveConv(c)}>
-                  <div className="conv-id">…{c.conversation_id?.slice(-10)}</div>
-                  <div className="conv-meta">{c.status} · {fmt(c.updated_at)}</div>
+                  <div className="conv-id">
+                    {custName(c.customer_id)
+                      ? <span className="conv-cust">{custName(c.customer_id)}</span>
+                      : <span className="muted">no customer</span>}
+                  </div>
+                  <div className="conv-meta">…{c.conversation_id?.slice(-10)} · {c.status} · {fmt(c.updated_at)}</div>
                 </div>
               ))}
             </div>

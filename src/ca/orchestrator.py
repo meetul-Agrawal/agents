@@ -161,7 +161,7 @@ AGENT_ORDER = [
 ]
 
 ENTITY_PATTERNS = {
-    "voucher_numbers": re.compile(r"\b[A-Z]{2,6}(?:/[A-Z0-9]{1,6}){1,3}/\d+\b"),
+    "voucher_numbers": re.compile(r"\b[A-Za-z]{2,6}(?:/[A-Za-z0-9-]{1,6}){1,3}/\d+\b"),
     "amounts": re.compile(
         r"(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)\s*(lakh|lakhs|crore|k)?|([\d,]{4,})\s*(?:rupees)"
         r"|\b(\d+(?:\.\d+)?)\s*(lakh|lakhs|crore)\b",
@@ -1002,6 +1002,38 @@ def load_context(state: CustomerAssistState, config: RunnableConfig = None) -> d
     }
 
 
+def _conversation_context(conversation_id: str | None) -> dict[str, Any]:
+    """Load entities from prior messages in this conversation so follow-up
+    messages can resolve anaphoric references like 'that invoice'.
+
+    Only voucher_numbers are carried forward — amounts and quantities are too
+    context-dependent to inherit safely.
+    """
+    if not conversation_id:
+        return {}
+    from . import inbox
+
+    try:
+        prior_msgs = inbox.conversation_messages(conversation_id)
+    except Exception:
+        return {}
+
+    ctx: dict[str, Any] = {}
+    prior_vouchers: list[str] = []
+    for msg in prior_msgs:
+        # Check stored classification metadata for prior entities.
+        meta = (msg.metadata or {}).get("classification", {})
+        entities = meta.get("entities", {})
+        prior_vouchers.extend(entities.get("voucher_numbers", []))
+        # Also run regex on prior inbound message text as fallback.
+        if msg.direction == "inbound" and msg.text:
+            prior_vouchers.extend(ENTITY_PATTERNS["voucher_numbers"].findall(msg.text))
+
+    if prior_vouchers:
+        ctx["prior_voucher_numbers"] = sorted(set(prior_vouchers))
+    return ctx
+
+
 def classify_intent(
     state: CustomerAssistState, config: RunnableConfig = None
 ) -> dict[str, Any]:
@@ -1024,6 +1056,14 @@ def classify_intent(
     )
     if understanding is not None:
         entities.update(entities_from(understanding, state.message))
+
+    # Carry forward voucher numbers from prior messages in this conversation
+    # so follow-up messages ("that invoice") can resolve against them.
+    if not entities.get("voucher_numbers"):
+        conv_ctx = _conversation_context(state.conversation_id)
+        if conv_ctx.get("prior_voucher_numbers"):
+            entities["voucher_numbers"] = conv_ctx["prior_voucher_numbers"]
+
     urgency = "high" if any(
         i.name in {"dispute", "settlement_request", "credit_note_request"} for i in intents
     ) else "normal"

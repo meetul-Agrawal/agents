@@ -262,10 +262,16 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         facts["ask"] = "confirm which item on the invoice they mean"
     composed = compose_grounded(
         "Write a short reply telling the customer we've opened a case to look "
-        "into their dispute, stating what the evidence facts show. If an "
-        "'ask' fact is present, ask that question too.",
+        "into their dispute, stating what the evidence facts show. "
+        "If an 'ask' fact is present, end with that question. "
+        "If there is NO 'ask' fact, do NOT ask any question — just confirm "
+        "the case is opened, summarize the evidence, and say a colleague will review.",
         facts,
     )
+    # Guard: if no question was requested but the LLM invented one, reject it
+    # and fall through to the deterministic template which is already correct.
+    if composed and "ask" not in facts and "?" in composed:
+        composed = None
     message = composed or _phrase(
         f"Thank you for flagging this — we've opened case {case.case_id} to look into it. "
         f"{summary}"

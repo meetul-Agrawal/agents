@@ -69,12 +69,14 @@ body { font-family: system-ui, -apple-system, sans-serif; height: 100vh; overflo
 .picker-opt:hover { background: var(--sidebar-active); }
 .picker-empty { padding: 8px 9px; font-size: 12px; color: var(--sidebar-muted); }
 .new-btn { margin: 8px; width: calc(100% - 16px); background: var(--accent); color: var(--accent-fg); border: none; border-radius: var(--radius); padding: 8px; cursor: pointer; font-weight: 700; font-size: 13px; transition: background .15s; }
-.new-btn:hover { background: var(--accent-hover); }
+.new-btn:hover:not(:disabled) { background: var(--accent-hover); }
+.new-btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .conv-list { flex: 1; overflow-y: auto; }
 .conv-item { padding: 10px 12px; cursor: pointer; border-bottom: 1px solid var(--sidebar-border); font-size: 12px; transition: background .1s; }
 .conv-item:hover { background: var(--sidebar-hover); }
 .conv-item.active { background: var(--sidebar-active); }
-.conv-id { font-family: monospace; color: var(--accent); font-size: 11px; }
+.conv-id { color: var(--sidebar-fg); font-size: 12px; font-weight: 600; }
+.conv-cust { color: var(--sidebar-fg); font-weight: 600; }
 .conv-meta { color: var(--sidebar-muted); font-size: 10px; margin-top: 2px; }
 .empty-list { padding: 16px; color: var(--sidebar-muted); font-size: 12px; }
 
