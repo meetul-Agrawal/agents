@@ -572,10 +572,7 @@ def classify_llm(text: str, context: dict[str, Any] | None = None) -> list[Inten
         # sa1_general's generic greeting — verified against CNV-2026-d52bb4c6157d,
         # where a customer's invoice number sent mid-dispute got "what's on
         # your mind?" because the model call failed on that one turn.
-        open_case = context.get("conversation_id") and app_db()["cases"].find_one(
-            {"conversation_id": context["conversation_id"], "status": {"$in": ["open", "investigating", "waiting"]}}
-        )
-        if open_case:
+        if _has_open_case(context.get("conversation_id")):
             return [Intent(name="dispute", confidence=0.5, entities={"agent": "sa3_dispute"},
                            reason="continuing open dispute case, classifier unavailable this turn")]
         return _UNKNOWN_INTENT
@@ -818,6 +815,47 @@ def load_context(state: CustomerAssistState, config: RunnableConfig = None) -> d
     }
 
 
+def _has_open_case(conversation_id: str | None) -> bool:
+    """Whether this conversation has a live, unresolved dispute case. Used as
+    the hard fallback when the classifier can't run at all (below), and as
+    half of the live-model bias in `classify_intent` — see
+    `_recent_dispute_turn`, its other half."""
+    if not conversation_id:
+        return False
+    return bool(app_db()["cases"].find_one(
+        {"conversation_id": conversation_id, "status": {"$in": ["open", "investigating", "waiting"]}}
+    ))
+
+
+def _recent_dispute_turn(conversation_id: str | None) -> bool:
+    """Whether the most recent prior turn in this conversation was itself
+    classified `dispute` — the signal `_has_open_case` misses. SA-3 only
+    opens a `Case` once it has enough to act on; its first reply to a fresh
+    complaint is just a follow-up question (`sa3_dispute.py`), so the turn
+    right after that complaint — the one most likely to be a bare invoice
+    number or a terse amount — has no case yet to check. This is what
+    actually broke in evals/reports/dispute_approval_scenarios.md, Finding 1:
+    S1, S4 and S5 all lost the dispute thread on exactly that turn."""
+    if not conversation_id:
+        return False
+    from . import inbox
+
+    try:
+        msgs = inbox.conversation_messages(conversation_id)
+    except Exception:
+        return False
+    # Only messages that already carry classification metadata — the current
+    # turn's own inbound message is in this same list by the time this runs
+    # (it's persisted before `orchestrator.handle` is called, see
+    # `scripts/ui_server.py`), but has no classification yet, so this filter
+    # is what keeps "most recent" meaning the *prior* turn, not this one.
+    classified = [m for m in msgs if m.direction == "inbound" and (m.metadata or {}).get("classification")]
+    if not classified:
+        return False
+    last_intents = classified[-1].metadata["classification"].get("intents", [])
+    return "dispute" in last_intents
+
+
 def _conversation_context(conversation_id: str | None) -> dict[str, Any]:
     """Load entities from prior messages in this conversation so follow-up
     messages can resolve anaphoric references like 'that invoice'.
@@ -875,6 +913,19 @@ def classify_intent(
     config = _config(config)
     classifier: Classifier = config.get("classifier") or default_classifier()
     history = format_recent_history(state.conversation_id)
+    if _has_open_case(state.conversation_id) or _recent_dispute_turn(state.conversation_id):
+        # Bias, not override — a terse follow-up ("URD/113/8443", "settle for
+        # 200") reads as a fresh, unrelated request without this; it must
+        # still lose to a message that's actually about something else.
+        # Folded into `history` (not a separate prompt field) so the one
+        # memoized `understand()` call below stays a cache hit — same string
+        # in, same string out.
+        history += (
+            "\n\n[This conversation has an unresolved dispute in progress. Unless the "
+            "current message is clearly about something else, classify it as continuing "
+            "that dispute (intent \"dispute\") rather than as a document request or a "
+            "fresh, unrelated ask — even if it is just a bare invoice number or an amount.]"
+        )
     context = {"history": history, "conversation_id": state.conversation_id, **config.get("case_context", {})}
     intents = classifier(state.message, context)
 
