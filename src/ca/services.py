@@ -157,7 +157,16 @@ def create_case(
     db: Any | None = None,
 ) -> tuple[Case, bool]:
     """Open a dispute case. Idempotent on message_id: a replayed message
-    re-finds its own case rather than opening a second."""
+    re-finds its own case rather than opening a second.
+
+    Also dedupes across messages within the same conversation: a case already
+    open here (e.g. from a bare complaint) gets its evidence extended and
+    title refreshed as later turns add the invoice/item — same shape as
+    `create_approval`'s conversation-scoped revision — rather than leaving a
+    reviewer two disconnected cases for one complaint (seen live rerunning
+    evals/reports/dispute_approval_scenarios.md, S1: a case opened before the
+    invoice number arrived, then a second case for the same complaint once it
+    did)."""
     db = db if db is not None else app_db()
     coll = db["cases"]
     key = f"case:{message_id}" if message_id else None
@@ -166,6 +175,25 @@ def create_case(
         prior = coll.find_one({"_idempotency": key})
         if prior:
             return Case.model_validate(_clean(prior)), False
+
+    if conversation_id:
+        open_prior = coll.find_one({
+            "conversation_id": conversation_id, "type": type,
+            "status": {"$in": ["open", "investigating", "waiting"]},
+        })
+        if open_prior:
+            merged_evidence = open_prior.get("evidence") or []
+            merged_evidence = merged_evidence + [e for e in (evidence or []) if e not in merged_evidence]
+            case = Case.model_validate(_clean(open_prior)).model_copy(update={
+                "title": title or open_prior.get("title", ""),
+                "evidence": merged_evidence,
+                "updated_at": utcnow(),
+            })
+            doc = case.model_dump(mode="json")
+            if key:
+                doc["_idempotency"] = key
+            coll.replace_one({"case_id": case.case_id}, doc)
+            return case, False
 
     case = Case(
         customer_id=customer_id, conversation_id=conversation_id, type=type,
@@ -215,6 +243,13 @@ def create_approval(
 ) -> tuple[Approval, bool]:
     """Raise a pending approval request. Idempotent on message_id.
 
+    Also dedupes across messages within the same conversation: a vague ask
+    ("I want to settle") followed by a concrete one ("settle for Rs.79") of
+    the same type revises the same pending approval rather than leaving a
+    reviewer two disconnected records for one customer ask — same shape as
+    `record_promise`'s open-promise revision, just scoped to `type` too since
+    a customer can have more than one approval type pending at once.
+
     This never decides the outcome — status is always "pending" on creation.
     `create_approval` is an auto-mode tool (registry.py): raising the request is
     safe by design. Only `decide_approval` may move it off "pending", and that
@@ -228,6 +263,23 @@ def create_approval(
         prior = coll.find_one({"_idempotency": key})
         if prior:
             return Approval.model_validate(_clean(prior)), False
+
+    if conversation_id:
+        open_prior = coll.find_one({
+            "conversation_id": conversation_id, "type": type, "status": "pending",
+        })
+        if open_prior:
+            approval = Approval.model_validate(_clean(open_prior)).model_copy(update={
+                "amount": amount if amount is not None else open_prior.get("amount"),
+                "context": context or open_prior.get("context") or {},
+                "recommendation": recommendation or open_prior.get("recommendation", ""),
+                "summary": summary or open_prior.get("summary", ""),
+            })
+            doc = approval.model_dump(mode="json")
+            if key:
+                doc["_idempotency"] = key
+            coll.replace_one({"approval_id": approval.approval_id}, doc)
+            return approval, False
 
     approval = Approval(
         customer_id=customer_id, conversation_id=conversation_id, type=type,

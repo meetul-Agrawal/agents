@@ -827,15 +827,26 @@ def _has_open_case(conversation_id: str | None) -> bool:
     ))
 
 
+_RECENT_DISPUTE_WINDOW = 3
+
+
 def _recent_dispute_turn(conversation_id: str | None) -> bool:
-    """Whether the most recent prior turn in this conversation was itself
-    classified `dispute` — the signal `_has_open_case` misses. SA-3 only
-    opens a `Case` once it has enough to act on; its first reply to a fresh
-    complaint is just a follow-up question (`sa3_dispute.py`), so the turn
-    right after that complaint — the one most likely to be a bare invoice
-    number or a terse amount — has no case yet to check. This is what
+    """Whether any of the last few prior turns in this conversation was
+    itself classified `dispute` — the signal `_has_open_case` misses. SA-3
+    only opens a `Case` once it has enough to act on; its first reply to a
+    fresh complaint is just a follow-up question (`sa3_dispute.py`), so the
+    turn right after that complaint — the one most likely to be a bare
+    invoice number or a terse amount — has no case yet to check. This is what
     actually broke in evals/reports/dispute_approval_scenarios.md, Finding 1:
-    S1, S4 and S5 all lost the dispute thread on exactly that turn."""
+    S1, S4 and S5 all lost the dispute thread on exactly that turn.
+
+    Checks the last `_RECENT_DISPUTE_WINDOW` turns, not just the immediately
+    prior one: a single-turn lookback still missed S4, where the bare-voucher
+    turn right after the complaint itself gets classified `document_request`
+    (not `dispute`), so the *next* turn's lookback landed on that miss
+    instead of the complaint before it. A bounded window (not "ever in this
+    conversation") keeps a dispute resolved 20 turns ago from biasing an
+    unrelated later turn."""
     if not conversation_id:
         return False
     from . import inbox
@@ -848,12 +859,10 @@ def _recent_dispute_turn(conversation_id: str | None) -> bool:
     # turn's own inbound message is in this same list by the time this runs
     # (it's persisted before `orchestrator.handle` is called, see
     # `scripts/ui_server.py`), but has no classification yet, so this filter
-    # is what keeps "most recent" meaning the *prior* turn, not this one.
+    # is what keeps "most recent" meaning the *prior* turns, not this one.
     classified = [m for m in msgs if m.direction == "inbound" and (m.metadata or {}).get("classification")]
-    if not classified:
-        return False
-    last_intents = classified[-1].metadata["classification"].get("intents", [])
-    return "dispute" in last_intents
+    recent = classified[-_RECENT_DISPUTE_WINDOW:]
+    return any("dispute" in m.metadata["classification"].get("intents", []) for m in recent)
 
 
 def _conversation_context(conversation_id: str | None) -> dict[str, Any]:

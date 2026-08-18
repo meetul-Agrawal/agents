@@ -54,14 +54,18 @@ def _approval_type(intents: list[str], entities: dict[str, Any]) -> str:
     """The model classifies which of the six categories this is (Request.
     approval_type, extracted in orchestrator.entities_from and validated there
     against APPROVAL_TYPES). credit_note_request has exactly one matching
-    category, so that mapping is a direct fact, not a guess. `settlement` is
-    the safe default when the model didn't name one — the most generic of the
-    six, never a wrong specific category."""
+    category, so that mapping is a direct fact, not a guess — checked first,
+    ahead of the free-form `claimed` entity, because the entity extractor has
+    been observed to mislabel an explicit "credit note" ask as write_off or
+    special_discount (evals/reports/dispute_approval_scenarios.md, Finding 3)
+    even when the intent classifier correctly tagged credit_note_request.
+    `settlement` is the safe default when neither says anything more specific
+    — the most generic of the six, never a wrong specific category."""
+    if "credit_note_request" in intents:
+        return "large_credit_note"
     claimed = entities.get("approval_type")
     if claimed in APPROVAL_TYPES:
         return claimed
-    if "credit_note_request" in intents:
-        return "large_credit_note"
     return "settlement"
 
 
@@ -116,19 +120,28 @@ def _recommendation(context: dict[str, Any]) -> str:
 def _summarize(approval_type: str, amount: float | None, feedback: str = "") -> str:
     """One glance-length sentence for a human reviewer's list view — distinct
     from `_recommendation`'s multi-fact account context. `feedback` is the
-    prior verify attempt's objection, fed back in so a retry actually
-    addresses it rather than resampling the same mistake."""
+    prior verify attempt's objection, fed back in as redraft *guidance* — in
+    the instruction text, not `facts` — so a retry addresses it without
+    narrating the retry itself. Putting it in `facts` (as tried before) let
+    the model turn an internal QA note into an invented customer-facing claim
+    like "due to previous rejection of..." — nothing in the conversation ever
+    said that (evals/reports/dispute_approval_scenarios.md, Finding 2, S8)."""
     facts: dict[str, Any] = {"approval_type": approval_type}
     if amount is not None:
         facts["amount"] = _inr(amount)
-    if feedback:
-        facts["previous_attempt_was_rejected_because"] = feedback
-    composed = compose_grounded(
+    instruction = (
         "Write ONE short sentence summarizing this approval request, for a "
         "human reviewer glancing at a list of pending requests. State only "
-        "the facts given.",
-        facts,
+        "the facts given."
     )
+    if feedback:
+        instruction += (
+            f" A prior draft of this same sentence was rejected for this reason: "
+            f"{feedback!r} — write a new sentence that fixes it, but never mention "
+            "a rejection, a retry, or any prior attempt; state only the approval "
+            "request's own facts."
+        )
+    composed = compose_grounded(instruction, facts)
     if composed:
         return composed
     amount_text = f" for {_inr(amount)}" if amount is not None else ""
