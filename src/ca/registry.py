@@ -25,6 +25,7 @@ READ_TOOLS = [
     ToolSpec(name="get_conversation_history", purpose="Past messages", access="read"),
     ToolSpec(name="get_customer_timeline", purpose="Chronological customer history", access="read"),
     ToolSpec(name="get_events", purpose="Raw event log for a customer", access="read"),
+    ToolSpec(name="get_open_promise", purpose="Existing open payment promise for a customer", access="read"),
 ]
 
 WRITE_TOOLS = [

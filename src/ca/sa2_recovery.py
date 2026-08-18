@@ -30,6 +30,7 @@ eval asks for it.
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import date, timedelta
 from typing import Any
@@ -37,7 +38,7 @@ from typing import Any
 from . import customer360 as c3
 from . import services
 from .config import app_db
-from .contracts import AgentResult, AgentTask, CustomerAssistState, ProposedAction, ToolCall
+from .contracts import AgentResult, AgentTask, CustomerAssistState, ModelOutput, ProposedAction, ToolCall
 from .contracts import utcnow
 from .sa1_general import _inr, _fmt_date, _phrase, _read  # reuse, don't reimplement
 
@@ -206,13 +207,13 @@ def _fill_from_open_promise(
     if amount is not None and due is not None:
         return amount, due
 
-    # 2. Check incomplete promise events from current conversation
+    # 2. Check incomplete or unverified promise events from current conversation
     events = _read(calls, "get_events", lambda: c3.get_events(cid, limit=10), customer_id=cid, limit=10)
     for event in events or []:
         if event.get("type") != "RECOVERY_CONTACTED":
             continue
         payload = event.get("payload") or {}
-        if payload.get("outcome") != "incomplete_promise":
+        if payload.get("outcome") not in ("incomplete_promise", "unverified_promise"):
             continue
         if event.get("conversation_id") != meta.get("conversation_id"):
             continue
@@ -222,6 +223,46 @@ def _fill_from_open_promise(
             due = date.fromisoformat(payload["due_date"])
         break
     return amount, due
+
+
+class _PromiseVerifyResult(ModelOutput):
+    ok: bool = True
+    feedback: str = ""
+
+
+_VERIFY_SYSTEM = (
+    "You check a payment promise about to be recorded against the customer message "
+    "it is based on. Does the amount and due date actually reflect what the customer "
+    "said? If yes, set ok=true. If something is off — wrong amount, wrong date — set "
+    "ok=false and say what's wrong in 'feedback' (one short sentence) so we can ask "
+    "the customer to confirm. Return only the fields asked for."
+)
+
+MAX_VERIFY_ATTEMPTS = 3
+
+
+def _verify_promise(message: str, amount: float, due: date) -> tuple[bool, str]:
+    """Self-check before commit: does this amount/date actually match what the
+    customer said? Unlike SA-4/SA-9 (which always raise the approval and only
+    redraft its summary afterward), a payment promise is only ever committed
+    once verified — same reasoning as `sa4_approval._verify`: no provider
+    configured means nothing to check against, so treat as verified and let
+    the deterministic extraction stand."""
+    import os
+
+    from . import llm
+
+    if os.getenv("CA_PHRASE", "on").lower() == "off" or not llm.available():
+        return True, ""
+    facts = {"customer_message": message, "amount": _inr(amount), "due_date": _fmt_date(due)}
+    try:
+        out = llm.complete_structured(
+            _PromiseVerifyResult, _VERIFY_SYSTEM, json.dumps(facts, default=str),
+            capability="summarization", example={"ok": True, "feedback": ""},
+        )
+    except llm.LLMUnavailable:
+        return True, ""
+    return out.ok, out.feedback
 
 
 def _handle_promise(
@@ -267,6 +308,28 @@ def _handle_promise(
         else:
             ask = "How much will you pay, and by when?"
         return f"Thanks for letting us know. {ask}", "needs_information"
+
+    verified, feedback, attempts = True, "", 0
+    for attempts in range(1, MAX_VERIFY_ATTEMPTS + 1):
+        verified, feedback = _verify_promise(message, amount, due)
+        if verified:
+            break
+
+    if not verified:
+        services.record_event(
+            cid, "RECOVERY_CONTACTED", "sa2_recovery",
+            conversation_id=meta["conversation_id"], message_id=meta["message_id"],
+            payload={
+                "outcome": "unverified_promise",
+                "amount": amount,
+                "due_date": due.isoformat(),
+                "feedback": feedback,
+                "verify_attempts": attempts,
+            },
+        )
+        calls.append(ToolCall(tool="create_event"))
+        confirm = f"Just to confirm — you'll pay {_inr(amount)} by {_fmt_date(due)}?"
+        return f"{confirm} {feedback}".strip(), "needs_information"
 
     promise, kind = services.record_promise(
         cid, amount, due,

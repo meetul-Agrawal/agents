@@ -163,6 +163,82 @@ def test_promise_modification_emits_a_modified_event(recorder, monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# Verify-before-commit — the gather/verify/retry loop added alongside SA-9
+# --------------------------------------------------------------------------
+
+
+def test_verify_passes_immediately_costs_one_call(recorder, monkeypatch):
+    """No mismatch -> one verify call, not three."""
+    promises, events, tasks = recorder
+    calls = {"n": 0}
+
+    def counting_verify(message, amount, due):
+        calls["n"] += 1
+        return True, ""
+
+    monkeypatch.setattr(sa2, "_verify_promise", counting_verify)
+    sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
+            _state("I'll pay 2 lakh by 20 August."))
+    assert calls["n"] == 1
+    assert promises == [(200000.0, date(2026, 8, 20), "created")]
+
+
+def test_failing_verify_retries_up_to_three_times_then_asks_to_confirm(recorder, monkeypatch):
+    """A draft that never checks out is never committed — after MAX_VERIFY_ATTEMPTS
+    the customer is asked to confirm instead, same shape as SA-9's approval loop."""
+    promises, events, tasks = recorder
+    calls = {"n": 0}
+
+    def always_fails(message, amount, due):
+        calls["n"] += 1
+        return False, f"attempt {calls['n']} looks off"
+
+    monkeypatch.setattr(sa2, "_verify_promise", always_fails)
+    result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
+                     _state("I'll pay 2 lakh by 20 August."))
+    assert calls["n"] == sa2.MAX_VERIFY_ATTEMPTS
+    assert promises == []
+    assert result.status == "needs_information"
+    assert events[-1] == ("RECOVERY_CONTACTED", {
+        "outcome": "unverified_promise", "amount": 200000.0, "due_date": "2026-08-20",
+        "feedback": "attempt 3 looks off", "verify_attempts": 3,
+    })
+    assert "confirm" in result.customer_message.lower()
+
+
+def test_verify_that_passes_on_retry_stops_early(recorder, monkeypatch):
+    calls = {"n": 0}
+
+    def fails_once(message, amount, due):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            return True, ""
+        return False, "not specific enough"
+
+    monkeypatch.setattr(sa2, "_verify_promise", fails_once)
+    promises, events, tasks = recorder
+    sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
+            _state("I'll pay 2 lakh by 20 August."))
+    assert calls["n"] == 2
+    assert promises == [(200000.0, date(2026, 8, 20), "created")]
+
+
+def test_rejected_promise_is_recoverable_from_the_backfill_on_a_later_turn(recorder, monkeypatch):
+    """A prior turn's verify-reject (outcome=unverified_promise) must feed the
+    same backfill path as an incomplete promise — otherwise the retry the
+    customer is asked for throws away the half of the promise already known."""
+    promises, events, tasks = recorder
+    monkeypatch.setattr(c3, "get_events", lambda cid, limit=10: [{
+        "type": "RECOVERY_CONTACTED", "conversation_id": None,
+        "payload": {"outcome": "unverified_promise", "amount": 45000.0, "due_date": "2026-08-22"},
+    }])
+    monkeypatch.setattr(sa2, "_verify_promise", lambda message, amount, due: (True, ""))
+    sa2.run(_task("payment_promise", entities={}),
+            _state("Yes, please go ahead and record it for 22 August."))
+    assert promises == [(45000.0, date(2026, 8, 22), "created")]
+
+
+# --------------------------------------------------------------------------
 # Payment claim — verified against receipts, never thanked on faith
 # --------------------------------------------------------------------------
 
