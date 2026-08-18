@@ -570,22 +570,37 @@ def classify_llm(text: str, context: dict[str, Any] | None = None) -> list[Inten
     history = context.get("history", "")
     understanding = understand(text, history=history)
     if understanding is None:
-        # A model outage (LLMUnavailable) must not look like the customer
-        # changed the subject. If this conversation has an open dispute case,
-        # keep the reply routed to sa3_dispute instead of dropping to
-        # sa1_general's generic greeting — verified against CNV-2026-d52bb4c6157d,
-        # where a customer's invoice number sent mid-dispute got "what's on
-        # your mind?" because the model call failed on that one turn.
-        if _has_open_case(context.get("conversation_id")):
-            return [Intent(name="dispute", confidence=0.5, entities={"agent": "sa3_dispute"},
-                           reason="continuing open dispute case, classifier unavailable this turn")]
-        return _UNKNOWN_INTENT
+        return _continuity_fallback(context.get("conversation_id"), "classifier unavailable this turn")
     if understanding.is_greeting_only and not understanding.requests:
         return [Intent(name="unknown", confidence=0.9, entities={"agent": "sa1_general"},
                        reason="greeting or acknowledgement only")]
 
     intents = intents_from(understanding, text)
-    return intents or _UNKNOWN_INTENT
+    if intents:
+        return intents
+    return _continuity_fallback(context.get("conversation_id"), "classifier returned nothing usable")
+
+
+def _continuity_fallback(conversation_id: str | None, why: str) -> list[Intent]:
+    """A model outage, or a model call that ran but produced nothing usable
+    (every request filtered by grounding, or none at all — the exact shape a
+    bare, terse reply like "500000" or an invoice number gets), must not look
+    like the customer changed the subject. If this conversation has an open
+    dispute case or a payment promise being actively confirmed, keep the
+    reply routed there instead of dropping to sa1_general's generic fallback.
+
+    Dispute case verified against CNV-2026-d52bb4c6157d, where a customer's
+    invoice number sent mid-dispute got "what's on your mind?" because the
+    model call failed on that one turn. Payment-promise case verified against
+    a bare "500000" answering SA-2's own "confirm the amount you plan to
+    settle by 30 Aug 2026?" landing on sa1_general's "Could not find the
+    answer" instead — the model returned no request at all for a lone number,
+    even with the history bias `classify_intent` already adds."""
+    if _has_open_case(conversation_id):
+        return [Intent(name="dispute", confidence=0.5, entities={"agent": "sa3_dispute"}, reason=why)]
+    if _recent_intent_turn(conversation_id, "payment_promise", _RECENT_INTENT_WINDOW):
+        return [Intent(name="payment_promise", confidence=0.5, entities={"agent": "sa2_recovery"}, reason=why)]
+    return _UNKNOWN_INTENT
 
 
 Classifier = Callable[[str, dict[str, Any] | None], list[Intent]]

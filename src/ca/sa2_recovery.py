@@ -162,6 +162,20 @@ def _amount(entities: dict[str, Any]) -> float | None:
     return float(amounts[0]) if amounts else None
 
 
+def _bare_amount(message: str) -> float | None:
+    """A reply that is nothing but a number ("500000") answering SA-2's own
+    "confirm the amount..." question carries no currency marker for the
+    regex floor (`orchestrator.ENTITY_PATTERNS`) to anchor on, and there is
+    no model `request` to draw a claim from either when the classifier fell
+    back to bare continuity routing (`orchestrator._continuity_fallback`).
+    Reads the customer's own digits directly — not a guess, the same "it's
+    exactly what they typed" principle as `verify_value`."""
+    text = (message or "").strip().replace(",", "")
+    if not text or not text.replace(".", "", 1).isdigit():
+        return None
+    return float(text)
+
+
 def _add_task(
     cid: str, kind: str, title: str, due: date | None,
     meta: dict, calls: list[ToolCall], actions: list[ProposedAction],
@@ -282,7 +296,7 @@ def _handle_promise(
             None,
         )
 
-    amount = _amount(entities)
+    amount = _amount(entities) or _bare_amount(message)
     due = parse_due_date(message, utcnow().date())
 
     if amount is None or due is None:
