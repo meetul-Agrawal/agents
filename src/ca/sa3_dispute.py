@@ -289,8 +289,15 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
         )
         return result("needs_information", ask, calls)
 
+    # Union, not either/or: item_hint may be a carried-forward slot from an
+    # earlier turn (e.g. "issue in rawa" ... later "URD/113/6892" — the invoice
+    # arrives with no item text of its own, so item_hint is the only source).
+    # But when THIS turn's own message names the item ("Gangwal Sattu Aata
+    # 500gm packages are leaking") a stale/vague item_hint from a prior turn
+    # ("last order") must not shadow it — match against both.
+    match_text = " ".join(t for t in (item_hint, state.message) if t)
     evidence = (
-        _voucher_evidence(cid, voucher_numbers, item_hint or state.message, calls)
+        _voucher_evidence(cid, voucher_numbers, match_text, calls)
         if voucher_numbers else _outstanding_evidence(cid, calls)
     )
 

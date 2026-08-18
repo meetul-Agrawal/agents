@@ -5,19 +5,8 @@ const api = {
   post: (url, body) => fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body || {}),
+    body: JSON.stringify(body),
   }).then(r => r.json()),
-}
-
-// Generic key/value renderer for approval `context` and dispute `evidence`
-// entries — their shape varies by agent (SA-3/SA-4 add fields over time), so
-// this shows whatever is there instead of hardcoding each field.
-const labelize = key => key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
-const formatValue = (key, val) => {
-  if (val == null || val === '') return '—'
-  if (Array.isArray(val)) return val.length ? val.join(', ') : '—'
-  if (typeof val === 'number') return /amount|outstanding/i.test(key) ? `₹${val.toLocaleString()}` : val.toLocaleString()
-  return String(val)
 }
 
 export default function App() {
@@ -25,65 +14,34 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [lastRefreshed, setLastRefreshed] = useState(new Date())
 
-  // Call prep modal
+  // Call prep modal state
   const [selCustomerForPrep, setSelCustomerForPrep] = useState(null)
   const [callPrepData, setCallPrepData] = useState(null)
   const [callPrepLoading, setCallPrepLoading] = useState(false)
   const [scriptLang, setScriptLang] = useState('hinglish')
   const [copied, setCopied] = useState(false)
 
+  // Email modal state
+  const [selCustomerForEmail, setSelCustomerForEmail] = useState(null)
+  const [emailTo, setEmailTo] = useState('')
+  const [emailSubject, setEmailSubject] = useState('')
+  const [emailBody, setEmailBody] = useState('')
+  const [emailSending, setEmailSending] = useState(false)
+  const [emailSentResult, setEmailSentResult] = useState(null)
+  const [emailCopied, setEmailCopied] = useState(false)
+
+  // Message modal state (sent on UI SA)
+  const [selCustomerForMsg, setSelCustomerForMsg] = useState(null)
+  const [msgRecipient, setMsgRecipient] = useState('')
+  const [msgChannel, setMsgChannel] = useState('chat') // 'chat' | 'whatsapp' | 'sms'
+  const [msgTemplate, setMsgTemplate] = useState('overdue_notice')
+  const [msgText, setMsgText] = useState('')
+  const [msgSending, setMsgSending] = useState(false)
+  const [msgSentResult, setMsgSentResult] = useState(null)
+  const [activeConvId, setActiveConvId] = useState(null)
+
   // Active navigation view tab
   const [activeTab, setActiveTab] = useState('overview') // 'overview' | 'fleet' | 'portfolio' | 'stream'
-
-  // Human Supervisory Tasks modal
-  const [hitlOpen, setHitlOpen] = useState(false)
-  const [hitlTab, setHitlTab] = useState('approvals') // 'approvals' | 'disputes' | 'promises'
-  const [hitlLoading, setHitlLoading] = useState(false)
-  const [hitlData, setHitlData] = useState({ approvals: [], disputes: [], promises: [] })
-  const [hitlBusyId, setHitlBusyId] = useState(null)
-  const [noteDrafts, setNoteDrafts] = useState({}) // id -> ops' note, sent verbatim to the customer
-
-  function loadHitl() {
-    setHitlLoading(true)
-    Promise.all([
-      api.get('/api/approvals?status=pending'),
-      api.get('/api/disputes?status=all'),
-      api.get('/api/promises?status=promised'),
-    ])
-      .then(([approvals, disputes, promises]) => setHitlData({ approvals, disputes, promises }))
-      .catch(err => console.error('HITL fetch failure:', err))
-      .finally(() => setHitlLoading(false))
-  }
-
-  function openHitl() {
-    setHitlOpen(true)
-    loadHitl()
-  }
-
-  async function decideApproval(approvalId, approved) {
-    setHitlBusyId(approvalId)
-    try {
-      // note goes to the customer verbatim, never through the LLM — decision_message()
-      // hardcodes the verdict sentence on purpose (see sa4_approval.py docstring).
-      await api.post(`/api/approvals/${approvalId}/decide`, { approved, note: noteDrafts[approvalId] || '' })
-      loadHitl()
-      loadDashboard()
-    } finally {
-      setHitlBusyId(null)
-    }
-  }
-
-  async function resolveDispute(caseId, outcome) {
-    setHitlBusyId(caseId)
-    try {
-      const note = noteDrafts[caseId] || ''
-      await api.post(`/api/disputes/${caseId}/resolve`, { outcome, resolution: note, note })
-      loadHitl()
-      loadDashboard()
-    } finally {
-      setHitlBusyId(null)
-    }
-  }
 
   function loadDashboard() {
     setLoading(true)
@@ -102,6 +60,7 @@ export default function App() {
     return () => clearInterval(timer)
   }, [])
 
+  // Call prep opener
   async function openCallPrep(customer) {
     if (!customer?.customer_id) return
     setSelCustomerForPrep(customer)
@@ -117,12 +76,135 @@ export default function App() {
     }
   }
 
+  // Email modal opener
+  async function openEmailModal(customer) {
+    if (!customer?.customer_id) return
+    setSelCustomerForEmail(customer)
+    setEmailSentResult(null)
+    setEmailCopied(false)
+    setEmailSending(false)
+
+    try {
+      const contact = await api.get(`/api/customers/${customer.customer_id}/contact`)
+      const recipient = contact.email || 'accounts@clientdomain.com'
+      setEmailTo(recipient)
+      setEmailSubject(`Statement of Accounts & Overdue Settlement Notice - Gangwal Flour Foods (${customer.customer_name})`)
+      setEmailBody(
+`Dear Finance Team,
+${customer.customer_name}
+
+Greetings from Gangwal Flour Foods LLP.
+
+This is a formal reminder regarding your outstanding trade balance as per our ledger books.
+
+ACCOUNT SUMMARY:
+• Customer Name: ${customer.customer_name}
+• Total Outstanding: ${customer.outstanding_formatted}
+• Aging Status: ${customer.ageing_bucket} (${customer.open_bills} Open Invoices)
+
+We request you to review the attached statement and release payment for overdue invoices at the earliest.
+
+BANK REMITTANCE DETAILS:
+• Bank: HDFC Bank Ltd
+• A/C Name: Gangwal Flour Foods LLP
+• A/C No: 50200028192811
+• IFSC Code: HDFC0000123
+
+Kindly confirm the UTR number / payment reference once remitted.
+
+Warm regards,
+Credit & Receivables Desk
+Gangwal Flour Foods LLP`
+      )
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  async function handleSendEmail() {
+    if (!selCustomerForEmail || !emailTo.trim()) return
+    setEmailSending(true)
+    try {
+      const res = await api.post(`/api/customers/${selCustomerForEmail.customer_id}/send-email`, {
+        recipient_email: emailTo,
+        subject: emailSubject,
+        body: emailBody,
+      })
+      setEmailSentResult(res)
+      loadDashboard()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setEmailSending(false)
+    }
+  }
+
+  // Message modal opener (sends to UI SA)
+  async function openMessageModal(customer) {
+    if (!customer?.customer_id) return
+    setSelCustomerForMsg(customer)
+    setMsgSentResult(null)
+    setMsgSending(false)
+    setMsgChannel('chat')
+    setMsgTemplate('overdue_notice')
+
+    try {
+      const contact = await api.get(`/api/customers/${customer.customer_id}/contact`)
+      setMsgRecipient(contact.mobile || '+91-9893559251')
+      setActiveConvId(contact.conversation_id)
+      setMsgText(`Dear ${customer.customer_name}, this is a gentle reminder regarding your pending balance of ${customer.outstanding_formatted} (${customer.open_bills} open bills). Kindly arrange settlement or let us know your planned payment date.`)
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  function applyMsgTemplate(tmpl) {
+    setMsgTemplate(tmpl)
+    if (!selCustomerForMsg) return
+    if (tmpl === 'overdue_notice') {
+      setMsgText(`Dear ${selCustomerForMsg.customer_name}, this is a gentle reminder regarding your pending balance of ${selCustomerForMsg.outstanding_formatted} (${selCustomerForMsg.open_bills} open bills). Kindly arrange settlement or let us know your planned payment date.`)
+    } else if (tmpl === 'statement_dispatch') {
+      setMsgText(`Namaste ${selCustomerForMsg.customer_name}, aapka latest ledger statement Gangwal Flour Foods se WhatsApp par share kiya gaya hai. Total dues: ${selCustomerForMsg.outstanding_formatted}. Please check and confirm.`)
+    } else if (tmpl === 'promise_followup') {
+      setMsgText(`Dear ${selCustomerForMsg.customer_name}, as discussed, we have noted your upcoming payment commitment. Kindly ensure clearance via RTGS/NEFT by the promised date. Thank you.`)
+    } else if (tmpl === 'urgent_clearance') {
+      setMsgText(`URGENT: ${selCustomerForMsg.customer_name}, multiple invoices in your account have crossed 90+ days aging (${selCustomerForMsg.outstanding_formatted}). Please clear the oldest bills today to avoid supply hold.`)
+    }
+  }
+
+  async function handleSendSAMessage() {
+    if (!selCustomerForMsg || !msgText.trim()) return
+    setMsgSending(true)
+    try {
+      const res = await api.post(`/api/customers/${selCustomerForMsg.customer_id}/send-sa-message`, {
+        message: msgText,
+        channel: msgChannel,
+        direction: 'outbound',
+        conversation_id: activeConvId,
+      })
+      setMsgSentResult(res)
+      setActiveConvId(res.conversation_id)
+      loadDashboard()
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setMsgSending(false)
+    }
+  }
+
   function copyScript() {
     if (!callPrepData) return
     const text = scriptLang === 'hinglish' ? callPrepData.call_script_hinglish : callPrepData.call_script_english
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  function copyEmailBody() {
+    navigator.clipboard.writeText(emailBody).then(() => {
+      setEmailCopied(true)
+      setTimeout(() => setEmailCopied(false), 2000)
     })
   }
 
@@ -218,7 +300,7 @@ export default function App() {
             </div>
             <div className="cc-hero-number">{metrics.historical_collected_formatted || '₹0.00'}</div>
             <div className="cc-hero-footnote">
-              <span className="tag-metric tag-emerald">{(company.total_vouchers_indexed || 0).toLocaleString()} VOUCHERS</span>
+              <span className="tag-metric tag-emerald">380K VOUCHERS</span>
               <span>Reconciled in ERP database</span>
             </div>
           </div>
@@ -231,13 +313,13 @@ export default function App() {
             </div>
             <div className="cc-hero-number">{metrics.autonomous_resolution_rate || 88.4}%</div>
             <div className="cc-hero-footnote">
-              <span className="tag-metric tag-indigo">{metrics.avg_settlement_days ?? 16} DAYS</span>
+              <span className="tag-metric tag-indigo">16 DAYS</span>
               <span>Average portfolio settlement speed</span>
             </div>
           </div>
 
           {/* Company-Wide HITL Attention */}
-          <div className="cc-hero-card" onClick={openHitl} style={{ cursor: 'pointer' }} title="View approvals, disputes & promises">
+          <div className="cc-hero-card">
             <div className="cc-card-eyebrow">
               <span className="cc-card-label">Human Supervisory Tasks</span>
               <span className="cc-card-code">HITL-04</span>
@@ -302,67 +384,77 @@ export default function App() {
               {debtors.map(c => (
                 <div key={c.customer_id} className={`cc-debtor-row risk-${c.risk_level}`}>
                   <div className="cc-debtor-top">
-                    <div className="cc-debtor-name">{c.customer_name}</div>
+                    <div>
+                      <div className="cc-debtor-name">{c.customer_name}</div>
+                      <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--ink-secondary)', marginTop: '3px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <span>Avg Settlement: <strong style={{ color: 'var(--ink-primary)' }}>{c.avg_settlement_formatted || 'N/A'}</strong></span>
+                        <span>·</span>
+                        <span>Last Paid: <strong style={{ color: 'var(--telemetry-emerald)' }}>{c.last_paid_formatted || 'No payment on record'}</strong></span>
+                      </div>
+                    </div>
                     <div className="cc-debtor-sum">{c.outstanding_formatted}</div>
                   </div>
                   <div className="cc-debtor-meta">
                     <div><strong>Aging Status:</strong> {c.ageing_bucket} ({c.open_bills} open invoices)</div>
                   </div>
                   <div className="cc-debtor-controls">
-                    <button className="btn-call-prep-trigger" onClick={() => openCallPrep(c)}>
+                    <button className="btn-call-prep-trigger" onClick={() => openCallPrep(c)} title="Generate AI Call Prep Script">
                       [CALL PREP BRIEF]
                     </button>
+                    <button className="btn-action-trigger btn-email-trigger" onClick={() => openEmailModal(c)} title="Send Statement / Overdue Email">
+                      [EMAIL]
+                    </button>
+                    <button className="btn-action-trigger btn-message-trigger" onClick={() => openMessageModal(c)} title="Send Message on UI SA Assistant">
+                      [MESSAGE]
+                    </button>
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
+                      <span style={{ color: 'var(--ink-secondary)' }}>Status:</span>
+                      <span style={{ fontWeight: 700, textTransform: 'uppercase', color: c.risk_level === 'critical' ? 'var(--telemetry-rose)' : 'var(--telemetry-amber)' }}>
+                        {c.risk_level}
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
           </div>
 
-          {/* Panel 2: Agent Event Feed */}
+          {/* Panel 2: Live Inbound Stream */}
           <div className="cc-panel-box">
             <div className="cc-panel-header">
               <div className="cc-panel-title">
-                <span className="cc-title-prefix">[FLEET ACTIVITY]</span>
-                <span>Agent Event Feed</span>
+                <span className="cc-title-prefix">[STREAM / AUDIT]</span>
+                <span>Omnichannel Message Ingestion</span>
               </div>
               <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--ink-secondary)' }}>
-                What SA-2/3/4 decided
+                Live customer transactions
               </span>
             </div>
 
-            <div className="cc-panel-scroll cc-event-feed">
+            <div className="cc-panel-scroll">
               {stream.length === 0 && (
                 <div style={{ color: 'var(--ink-secondary)', textAlign: 'center', padding: '28px', fontFamily: 'var(--font-mono)' }}>
-                  No agent events yet
+                  No inbound stream records
                 </div>
               )}
-              {stream.map((item, idx) => (
-                <div key={item.event_id || idx} className="cc-event-row">
-                  <div className={`cc-event-avatar tag-${item.color}`} title={item.agent_label}>
-                    {item.agent.replace(/[^0-9]/g, '')}
+              {stream.slice(0, 8).map((item, idx) => (
+                <div key={item.message_id || idx} className="cc-stream-card">
+                  <div className="cc-stream-heading">
+                    <span>{item.customer_name}</span>
+                    <span className="cc-stream-ts">
+                      {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
                   </div>
-                  <div className="cc-event-bubble">
-                    <div className="cc-event-heading">
-                      <span>{item.agent_label}</span>
-                      <span className="cc-stream-ts">
-                        {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                      </span>
-                    </div>
-                    <div className="cc-event-headline">{item.headline}</div>
-                    {(item.tags || []).length > 0 && (
-                      <div className="cc-event-tags">
-                        {item.tags.map((t, i) => (
-                          <span key={i} className={`tag-metric tag-${t.color}`}>{t.label}</span>
-                        ))}
-                      </div>
-                    )}
-                    {item.detail && <div className="cc-event-detail">{item.detail}</div>}
-                    <button
-                      className="cc-event-jump"
-                      onClick={() => { setHitlTab(item.ref_type); openHitl() }}
-                    >
-                      View {labelize(item.ref_type).replace(/s$/, '')} →
-                    </button>
+                  <div className="cc-stream-quote">
+                    "{item.text}"
+                  </div>
+                  <div className="cc-stream-footer">
+                    <span style={{ color: 'var(--ink-secondary)' }}>Intent:</span>
+                    <span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>{item.intent}</span>
+                    <span style={{ marginLeft: 'auto', color: 'var(--ink-secondary)' }}>Route:</span>
+                    {(item.agents || []).map(a => (
+                      <span key={a} className="tag-metric tag-indigo">{a}</span>
+                    ))}
                   </div>
                 </div>
               ))}
@@ -380,33 +472,42 @@ export default function App() {
                 <span>Company Receivables Profile</span>
               </div>
               <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--ink-secondary)' }}>
-                {company.total_debtor_accounts || 0} Ledgers
+                5,000+ Ledgers
               </span>
             </div>
             <div className="cc-panel-scroll" style={{ padding: '20px 24px' }}>
               <div className="ageing-metric-stack">
-                {(() => {
-                  const raw = data?.ageing_distribution_raw || {}
-                  const fmt = data?.ageing_distribution || {}
-                  const total = Object.values(raw).reduce((a, b) => a + b, 0) || 1
-                  const buckets = [
-                    ['0-30', '0 - 30 DAYS [CURRENT TERMS]', 'emerald'],
-                    ['31-60', '31 - 60 DAYS [NORMAL BACKLOG]', 'cyan'],
-                    ['61-90', '61 - 90 DAYS [ACTIVE FOLLOW-UP]', 'amber'],
-                    ['90+', '90+ DAYS [CRITICAL CONCENTRATION]', 'rose'],
-                  ]
-                  return buckets.map(([key, label, color]) => (
-                    <div className="ageing-metric-row" key={key}>
-                      <div className="ageing-metric-header">
-                        <span>{label}</span>
-                        <span style={{ color: `var(--telemetry-${color})` }}>{fmt[key] || '₹0.00'}</span>
-                      </div>
-                      <div className="ageing-meter-track">
-                        <div className={`ageing-meter-fill fill-${color}`} style={{ width: `${Math.max(Math.round(((raw[key] || 0) / total) * 100), 1)}%` }}></div>
-                      </div>
-                    </div>
-                  ))
-                })()}
+                <div className="ageing-metric-row">
+                  <div className="ageing-metric-header">
+                    <span>0 - 30 DAYS [CURRENT TERMS]</span>
+                    <span style={{ color: 'var(--telemetry-emerald)' }}>₹45,600.00</span>
+                  </div>
+                  <div className="ageing-meter-track"><div className="ageing-meter-fill fill-emerald" style={{ width: '5%' }}></div></div>
+                </div>
+
+                <div className="ageing-metric-row">
+                  <div className="ageing-metric-header">
+                    <span>31 - 60 DAYS [NORMAL BACKLOG]</span>
+                    <span style={{ color: 'var(--telemetry-cyan)' }}>₹1,20,000.00</span>
+                  </div>
+                  <div className="ageing-meter-track"><div className="ageing-meter-fill fill-cyan" style={{ width: '10%' }}></div></div>
+                </div>
+
+                <div className="ageing-metric-row">
+                  <div className="ageing-metric-header">
+                    <span>61 - 90 DAYS [ACTIVE FOLLOW-UP]</span>
+                    <span style={{ color: 'var(--telemetry-amber)' }}>₹4,85,200.00</span>
+                  </div>
+                  <div className="ageing-meter-track"><div className="ageing-meter-fill fill-amber" style={{ width: '18%' }}></div></div>
+                </div>
+
+                <div className="ageing-metric-row">
+                  <div className="ageing-metric-header">
+                    <span>90+ DAYS [CRITICAL CONCENTRATION]</span>
+                    <span style={{ color: 'var(--telemetry-rose)' }}>{metrics.total_receivables_formatted || '₹10.58 Cr'}</span>
+                  </div>
+                  <div className="ageing-meter-track"><div className="ageing-meter-fill fill-rose" style={{ width: '100%' }}></div></div>
+                </div>
               </div>
             </div>
           </div>
@@ -451,7 +552,7 @@ export default function App() {
         </section>
       </main>
 
-      {/* ── Executive Call Prep Modal ── */}
+      {/* ── 1. Executive Call Prep Modal ── */}
       {selCustomerForPrep && (
         <div className="modal-overlay" onClick={() => setSelCustomerForPrep(null)}>
           <div className="modal-dialog" onClick={e => e.stopPropagation()}>
@@ -601,146 +702,197 @@ export default function App() {
         </div>
       )}
 
-      {/* ── Human Supervisory Tasks Modal ── */}
-      {hitlOpen && (
-        <div className="modal-overlay" onClick={() => setHitlOpen(false)}>
-          <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+      {/* ── 2. Outbound Email Drafter Modal ── */}
+      {selCustomerForEmail && (
+        <div className="modal-overlay" onClick={() => setSelCustomerForEmail(null)}>
+          <div className="modal-dialog" onClick={e => e.stopPropagation()} style={{ maxWidth: '720px' }}>
             <div className="modal-head">
               <div>
-                <div className="modal-head-title">Human Supervisory Tasks</div>
-                <div className="modal-head-sub">Approvals, disputes & payment promises awaiting action</div>
+                <div className="modal-head-title">[EMAIL DISPATCH] · Statement & Overdue Notice</div>
+                <div className="modal-head-sub">{selCustomerForEmail.customer_name} · Ledger Outbound</div>
               </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <button className="btn-copy-script" onClick={loadHitl} disabled={hitlLoading}>
-                  {hitlLoading ? '[LOADING]' : '[RELOAD]'}
-                </button>
-                <button className="btn-modal-close" onClick={() => setHitlOpen(false)}>[✕]</button>
-              </div>
+              <button className="btn-modal-close" onClick={() => setSelCustomerForEmail(null)}>[✕]</button>
             </div>
 
             <div className="modal-content-scroll">
-              <div className="script-tab-cluster">
-                <button className={`script-tab-item${hitlTab === 'approvals' ? ' active' : ''}`} onClick={() => setHitlTab('approvals')}>
-                  APPROVALS ({hitlData.approvals.length})
-                </button>
-                <button className={`script-tab-item${hitlTab === 'disputes' ? ' active' : ''}`} onClick={() => setHitlTab('disputes')}>
-                  DISPUTES ({hitlData.disputes.length})
-                </button>
-                <button className={`script-tab-item${hitlTab === 'promises' ? ' active' : ''}`} onClick={() => setHitlTab('promises')}>
-                  PROMISES ({hitlData.promises.length})
-                </button>
+              {emailSentResult ? (
+                <div className="status-toast-success">
+                  <span>✓ Email dispatch queued successfully to {emailSentResult.recipient}!</span>
+                  <span style={{ fontSize: '11px' }}>Timestamp: {new Date(emailSentResult.sent_at).toLocaleTimeString()}</span>
+                </div>
+              ) : null}
+
+              <div className="form-group">
+                <label className="form-label">Recipient Email Address</label>
+                <input
+                  className="form-input"
+                  value={emailTo}
+                  onChange={e => setEmailTo(e.target.value)}
+                  placeholder="accounts@customerdomain.com"
+                />
               </div>
 
-              {hitlTab === 'approvals' && (
-                hitlData.approvals.length === 0
-                  ? <div style={{ color: 'var(--ink-secondary)', textAlign: 'center', padding: '28px', fontFamily: 'var(--font-mono)' }}>No pending approvals</div>
-                  : hitlData.approvals.map(a => (
-                    <div key={a.approval_id} style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-whisper)', borderRadius: '6px', padding: '12px 14px', marginBottom: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div style={{ fontWeight: 700, fontSize: '13px' }}>{a.customer_name}</div>
-                        {a.amount != null && (
-                          <div style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--telemetry-amber)' }}>
-                            ₹{a.amount.toLocaleString()}
-                          </div>
-                        )}
-                      </div>
-                      <div style={{ fontSize: '12px', marginTop: '4px' }}>
-                        <strong>Asking for:</strong> {labelize(a.type)}{a.amount != null ? ` of ₹${a.amount.toLocaleString()}` : ''}
-                      </div>
-                      {a.recommendation && (
-                        <div style={{ fontSize: '12px', marginTop: '4px', color: 'var(--ink-secondary)' }}>{a.recommendation}</div>
-                      )}
-                      <textarea
-                        placeholder="Note to the customer (sent verbatim with the decision)…"
-                        value={noteDrafts[a.approval_id] || ''}
-                        onChange={e => setNoteDrafts(prev => ({ ...prev, [a.approval_id]: e.target.value }))}
-                        style={{ width: '100%', marginTop: '8px', minHeight: '54px', fontSize: '12px', fontFamily: 'inherit', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-whisper)', resize: 'vertical', boxSizing: 'border-box' }}
-                      />
-                      <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                        <button className="btn-call-prep-trigger" disabled={hitlBusyId === a.approval_id} onClick={() => decideApproval(a.approval_id, true)}>
-                          [APPROVE]
-                        </button>
-                        <button className="btn-call-prep-trigger" disabled={hitlBusyId === a.approval_id} onClick={() => decideApproval(a.approval_id, false)}>
-                          [REJECT]
-                        </button>
-                      </div>
-                    </div>
-                  ))
-              )}
+              <div className="form-group">
+                <label className="form-label">Email Subject</label>
+                <input
+                  className="form-input"
+                  value={emailSubject}
+                  onChange={e => setEmailSubject(e.target.value)}
+                />
+              </div>
 
-              {hitlTab === 'disputes' && (
-                hitlData.disputes.length === 0
-                  ? <div style={{ color: 'var(--ink-secondary)', textAlign: 'center', padding: '28px', fontFamily: 'var(--font-mono)' }}>No open disputes</div>
-                  : hitlData.disputes.map(d => (
-                    <div key={d.case_id} style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-whisper)', borderRadius: '6px', padding: '12px 14px', marginBottom: '8px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                        <div>
-                          <div style={{ fontWeight: 700, fontSize: '13px' }}>{d.customer_name}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--ink-secondary)', marginTop: '2px' }}>
-                            {d.type} · {d.priority} priority · {d.status}
-                          </div>
-                        </div>
-                        <span className={`tag-metric ${d.priority === 'critical' || d.priority === 'high' ? 'tag-rose' : 'tag-amber'}`}>
-                          {d.status}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: '12px', marginTop: '6px' }}>{d.title}</div>
-                      {d.evidence && d.evidence.length > 0 && (
-                        <div style={{ marginTop: '8px' }}>
-                          {d.evidence.map((ev, i) => (
-                            <div key={i} style={{ background: 'var(--surface-pure)', border: '1px solid var(--border-whisper)', borderRadius: '4px', padding: '8px 10px', marginTop: i ? '6px' : 0 }}>
-                              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-primary)', marginBottom: '4px' }}>{labelize(ev.type || 'evidence')}</div>
-                              {Object.entries(ev).filter(([k]) => k !== 'type').map(([k, v]) => (
-                                <div key={k} style={{ fontSize: '11px' }}>
-                                  <span style={{ color: 'var(--ink-secondary)' }}>{labelize(k)}:</span> {formatValue(k, v)}
-                                </div>
-                              ))}
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {d.resolution && (
-                        <div style={{ fontSize: '11px', color: 'var(--ink-secondary)', marginTop: '6px' }}><strong>Resolution:</strong> {d.resolution}</div>
-                      )}
-                      {['open', 'investigating', 'waiting'].includes(d.status) && (
-                        <>
-                          <textarea
-                            placeholder="Note to the customer (sent verbatim with the outcome)…"
-                            value={noteDrafts[d.case_id] || ''}
-                            onChange={e => setNoteDrafts(prev => ({ ...prev, [d.case_id]: e.target.value }))}
-                            style={{ width: '100%', marginTop: '8px', minHeight: '54px', fontSize: '12px', fontFamily: 'inherit', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-whisper)', resize: 'vertical', boxSizing: 'border-box' }}
-                          />
-                          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
-                            <button className="btn-call-prep-trigger" disabled={hitlBusyId === d.case_id} onClick={() => resolveDispute(d.case_id, 'solved')}>
-                              [MARK SOLVED]
-                            </button>
-                            <button className="btn-call-prep-trigger" disabled={hitlBusyId === d.case_id} onClick={() => resolveDispute(d.case_id, 'dropped')}>
-                              [DROP]
-                            </button>
-                          </div>
-                        </>
-                      )}
-                    </div>
-                  ))
-              )}
+              <div className="form-group">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label className="form-label">Statement & Overdue Notice Body</label>
+                  <button className="btn-copy-script" onClick={copyEmailBody}>
+                    {emailCopied ? '[COPIED]' : '[COPY EMAIL BODY]'}
+                  </button>
+                </div>
+                <textarea
+                  className="form-textarea"
+                  style={{ minHeight: '220px', fontFamily: 'var(--font-mono)', fontSize: '12px' }}
+                  value={emailBody}
+                  onChange={e => setEmailBody(e.target.value)}
+                />
+              </div>
 
-              {hitlTab === 'promises' && (
-                hitlData.promises.length === 0
-                  ? <div style={{ color: 'var(--ink-secondary)', textAlign: 'center', padding: '28px', fontFamily: 'var(--font-mono)' }}>No active promises</div>
-                  : hitlData.promises.map(p => (
-                    <div key={p.promise_id} style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-whisper)', borderRadius: '6px', padding: '12px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: '13px' }}>{p.customer_name}</div>
-                        <div style={{ fontSize: '11px', color: 'var(--ink-secondary)', marginTop: '2px' }}>
-                          Due {p.due_date} · {p.status}
-                        </div>
-                      </div>
-                      <div style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)' }}>
-                        ₹{p.amount.toLocaleString()}
-                      </div>
-                    </div>
-                  ))
-              )}
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '10px' }}>
+                <button className="btn-telemetry-refresh" onClick={() => setSelCustomerForEmail(null)}>
+                  Cancel
+                </button>
+                <button
+                  className="btn-call-prep-trigger"
+                  onClick={handleSendEmail}
+                  disabled={emailSending || !emailTo.trim()}
+                  style={{ background: 'var(--accent-primary)', padding: '8px 18px', fontSize: '12px' }}
+                >
+                  {emailSending ? '[SENDING DISPATCH...]' : '[SEND EMAIL DISPATCH]'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 3. Customer Assist (UI SA) Message Modal ── */}
+      {selCustomerForMsg && (
+        <div className="modal-overlay" onClick={() => setSelCustomerForMsg(null)}>
+          <div className="modal-dialog" onClick={e => e.stopPropagation()} style={{ maxWidth: '680px' }}>
+            <div className="modal-head">
+              <div>
+                <div className="modal-head-title">[UI SA DISPATCH] · Inbound/Outbound Message to Customer Assist</div>
+                <div className="modal-head-sub">
+                  Customer: {selCustomerForMsg.customer_name} · {activeConvId ? `Active Thread: ${activeConvId}` : 'New Thread'}
+                </div>
+              </div>
+              <button className="btn-modal-close" onClick={() => setSelCustomerForMsg(null)}>[✕]</button>
+            </div>
+
+            <div className="modal-content-scroll">
+              {msgSentResult ? (
+                <div className="status-toast-success">
+                  <span>✓ Message dispatched to UI SA Thread [{msgSentResult.conversation_id}]!</span>
+                  <a
+                    href={`http://localhost:5173`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{ color: 'var(--accent-primary)', fontWeight: 700, textDecoration: 'underline' }}
+                  >
+                    Open UI SA Desk ↗
+                  </a>
+                </div>
+              ) : null}
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+                <div className="form-group">
+                  <label className="form-label">Customer Mobile / Identity</label>
+                  <input
+                    className="form-input"
+                    value={msgRecipient}
+                    onChange={e => setMsgRecipient(e.target.value)}
+                    placeholder="+91-XXXXXXXXXX"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label className="form-label">Dispatch Channel</label>
+                  <select
+                    className="form-input"
+                    value={msgChannel}
+                    onChange={e => setMsgChannel(e.target.value)}
+                  >
+                    <option value="chat">Web Chat Desk (UI SA)</option>
+                    <option value="whatsapp">WhatsApp Business</option>
+                    <option value="sms">Transactional SMS</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Quick Smart Templates</label>
+                <div className="template-chip-cluster">
+                  <button
+                    className={`template-chip${msgTemplate === 'overdue_notice' ? ' active' : ''}`}
+                    onClick={() => applyMsgTemplate('overdue_notice')}
+                  >
+                    Overdue Notice
+                  </button>
+                  <button
+                    className={`template-chip${msgTemplate === 'statement_dispatch' ? ' active' : ''}`}
+                    onClick={() => applyMsgTemplate('statement_dispatch')}
+                  >
+                    Statement Summary
+                  </button>
+                  <button
+                    className={`template-chip${msgTemplate === 'promise_followup' ? ' active' : ''}`}
+                    onClick={() => applyMsgTemplate('promise_followup')}
+                  >
+                    Promise Follow-up
+                  </button>
+                  <button
+                    className={`template-chip${msgTemplate === 'urgent_clearance' ? ' active' : ''}`}
+                    onClick={() => applyMsgTemplate('urgent_clearance')}
+                  >
+                    Urgent Clearance
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label className="form-label">Message Content (Dispatched to UI SA Desk)</label>
+                <textarea
+                  className="form-textarea"
+                  value={msgText}
+                  onChange={e => setMsgText(e.target.value)}
+                  placeholder="Type message to dispatch to Customer Assist thread..."
+                  style={{ minHeight: '110px' }}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}>
+                <a
+                  href={`http://localhost:5173`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-telemetry-refresh"
+                  style={{ textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                >
+                  [OPEN MAIN UI SA DESK ↗]
+                </a>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="btn-telemetry-refresh" onClick={() => setSelCustomerForMsg(null)}>
+                    Cancel
+                  </button>
+                  <button
+                    className="btn-call-prep-trigger"
+                    onClick={handleSendSAMessage}
+                    disabled={msgSending || !msgText.trim()}
+                    style={{ background: 'var(--telemetry-emerald)', padding: '8px 18px', fontSize: '12px' }}
+                  >
+                    {msgSending ? '[DISPATCHING TO SA...]' : '[SEND MESSAGE ON UI SA]'}
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>

@@ -456,6 +456,8 @@ def compute_portfolio_snapshot(*, as_of: date | None = None, top_n: int = 10) ->
     per_customer_bills: dict[str, int] = defaultdict(int)
     per_customer_bucket: dict[str, dict[str, float]] = defaultdict(lambda: {b: 0.0 for b in AGEING_BUCKETS})
     settle_days: list[int] = []
+    customer_settle_days: dict[str, list[int]] = defaultdict(list)
+    customer_last_paid: dict[str, date] = {}
 
     for s in sales:
         ledger, number = s["_id"]["ledger"], s["_id"]["num"]
@@ -463,10 +465,15 @@ def compute_portfolio_snapshot(*, as_of: date | None = None, top_n: int = 10) ->
         paid = alloc["paid"] if alloc else 0.0
         invoice_date = _as_date(s["date"])
 
-        if alloc and paid + 0.01 >= s["invoiced"]:
+        if alloc:
             paid_date = _as_date(alloc.get("last_paid_date"))
-            if invoice_date and paid_date:
-                settle_days.append((paid_date - invoice_date).days)
+            if paid_date:
+                if ledger not in customer_last_paid or paid_date > customer_last_paid[ledger]:
+                    customer_last_paid[ledger] = paid_date
+                if paid + 0.01 >= s["invoiced"] and invoice_date:
+                    d = (paid_date - invoice_date).days
+                    settle_days.append(d)
+                    customer_settle_days[ledger].append(d)
 
         remaining = round(s["invoiced"] - paid, 2)
         if remaining <= 0.01:
@@ -484,6 +491,9 @@ def compute_portfolio_snapshot(*, as_of: date | None = None, top_n: int = 10) ->
             "outstanding": round(amount, 2),
             "open_bills": per_customer_bills[name],
             "ageing_bucket": max(per_customer_bucket[name].items(), key=lambda kv: kv[1])[0],
+            "avg_settlement_days": round(sum(customer_settle_days[name]) / len(customer_settle_days[name]), 1) if customer_settle_days.get(name) else None,
+            "last_paid_date": customer_last_paid[name].isoformat() if name in customer_last_paid else None,
+            "last_paid_formatted": customer_last_paid[name].strftime("%d %b %Y") if name in customer_last_paid else "No payment on record",
         }
         for name, amount in sorted(per_customer.items(), key=lambda kv: -kv[1])[:top_n]
     ]

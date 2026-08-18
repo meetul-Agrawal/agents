@@ -1,10 +1,14 @@
-"""Phase 5 gate: SA-2 recovery — deterministic dates, verified claims, recorded
+"""Phase 5 gate: SA-2 recovery — dates, verified claims, recorded
 promises/events, idempotency, and the missed-promise transition.
 
 Logic tests are hermetic: the write layer (`services`) and the clock are
 monkeypatched, so no MongoDB and no LLM. One idempotency test hits a real test
 database and skips when Mongo is unavailable.
-"""
+
+`parse_due_date`'s own phrasing-reading step (`_extract_due_date`) is an LLM
+call, so its tests monkeypatch that one function to return canned structured
+fields — what's under test here is `parse_due_date`'s calendar arithmetic
+given those fields, not the model's reading of English."""
 
 from __future__ import annotations
 
@@ -25,37 +29,53 @@ TODAY = date(2026, 8, 16)
 
 
 # --------------------------------------------------------------------------
-# Deterministic due-date parsing
+# Due-date arithmetic, given a canned structured read (the LLM step itself
+# is monkeypatched out — see module docstring)
 # --------------------------------------------------------------------------
 
 
+def _extract(**fields):
+    return sa2._DueDateExtract(**fields)
+
+
 @pytest.mark.parametrize(
-    "text,expected",
+    "text,extract,expected",
     [
-        ("I'll pay 2 lakh by 20 August", date(2026, 8, 20)),
-        ("payment by 20th August", date(2026, 8, 20)),
-        ("will clear on August 20", date(2026, 8, 20)),
-        ("by 2026-08-25", date(2026, 8, 25)),
-        ("paying on 25/08", date(2026, 8, 25)),
-        ("25/08/2026 for sure", date(2026, 8, 25)),
-        ("25-08-2026", date(2026, 8, 25)),
-        ("tomorrow", date(2026, 8, 17)),
-        ("day after tomorrow", date(2026, 8, 18)),
-        ("in 3 days", date(2026, 8, 19)),
-        ("next week", date(2026, 8, 23)),
-        ("by end of month", date(2026, 8, 31)),
-        ("I'll pay by 10 January", date(2027, 1, 10)),  # past this year -> next year
-        ("sometime soon", None),
-        ("", None),
+        ("I'll pay 2 lakh by 20 August", _extract(day=20, month=8), date(2026, 8, 20)),
+        ("payment by 20th August", _extract(day=20, month=8), date(2026, 8, 20)),
+        ("will clear on August 20", _extract(day=20, month=8), date(2026, 8, 20)),
+        ("by 2026-08-25", _extract(day=25, month=8, year=2026), date(2026, 8, 25)),
+        ("paying on 25/08", _extract(day=25, month=8), date(2026, 8, 25)),
+        ("25/08/2026 for sure", _extract(day=25, month=8, year=2026), date(2026, 8, 25)),
+        ("25-08-2026", _extract(day=25, month=8, year=2026), date(2026, 8, 25)),
+        ("tomorrow", _extract(relative_days=1), date(2026, 8, 17)),
+        ("day after tomorrow", _extract(relative_days=2), date(2026, 8, 18)),
+        ("in 3 days", _extract(relative_days=3), date(2026, 8, 19)),
+        ("after 12 days", _extract(relative_days=12), date(2026, 8, 28)),
+        ("next week", _extract(relative_days=7), date(2026, 8, 23)),
+        ("by end of month", _extract(end_of_month=True), date(2026, 8, 31)),
+        # past this year, no year stated, month named -> rolls to next year
+        ("I'll pay by 10 January", _extract(day=10, month=1), date(2027, 1, 10)),
+        ("sometime soon", _extract(), None),
+        ("", None, None),
     ],
 )
-def test_parse_due_date(text, expected):
+def test_parse_due_date(monkeypatch, text, extract, expected):
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: extract)
     assert sa2.parse_due_date(text, TODAY) == expected
 
 
-def test_next_weekday_is_always_in_the_future():
+def test_next_weekday_is_always_in_the_future(monkeypatch):
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(weekday="friday"))
     due = sa2.parse_due_date("I'll pay next Friday", TODAY)
     assert due.weekday() == 4 and due > TODAY
+
+
+def test_extract_due_date_skipped_when_no_llm(monkeypatch):
+    """Real (unmocked) `_extract_due_date` — no provider configured in the
+    test env, so it must return None rather than raise or hang."""
+    assert sa2._extract_due_date("by the 23rd") is None
+    assert sa2.parse_due_date("by the 23rd", TODAY) is None
 
 
 # --------------------------------------------------------------------------
@@ -119,8 +139,9 @@ def _state(message, customer_id=CID):
                               entities={"message_id": "MSG-1"})
 
 
-def test_promise_records_amount_and_parsed_date(recorder):
+def test_promise_records_amount_and_parsed_date(recorder, monkeypatch):
     promises, events, tasks = recorder
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=20, month=8))
     result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
                      _state("I'll pay 2 lakh by 20 August."))
     assert promises == [(200000.0, date(2026, 8, 20), "created")]
@@ -156,6 +177,7 @@ def test_promise_modification_emits_a_modified_event(recorder, monkeypatch):
         return PaymentPromise(customer_id=cid, amount=amount, due_date=due), "modified"
 
     monkeypatch.setattr(services, "record_promise", fake_modify)
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=22, month=8))
     result = sa2.run(_task("payment_promise", entities={"amounts": [150000.0]}),
                      _state("Actually I'll pay 1.5 lakh by 22 August instead."))
     assert events[0][0] == "PAYMENT_PROMISE_MODIFIED"
@@ -177,6 +199,7 @@ def test_verify_passes_immediately_costs_one_call(recorder, monkeypatch):
         return True, ""
 
     monkeypatch.setattr(sa2, "_verify_promise", counting_verify)
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=20, month=8))
     sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
             _state("I'll pay 2 lakh by 20 August."))
     assert calls["n"] == 1
@@ -194,6 +217,7 @@ def test_failing_verify_retries_up_to_three_times_then_asks_to_confirm(recorder,
         return False, f"attempt {calls['n']} looks off"
 
     monkeypatch.setattr(sa2, "_verify_promise", always_fails)
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=20, month=8))
     result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
                      _state("I'll pay 2 lakh by 20 August."))
     assert calls["n"] == sa2.MAX_VERIFY_ATTEMPTS
@@ -216,6 +240,7 @@ def test_verify_that_passes_on_retry_stops_early(recorder, monkeypatch):
         return False, "not specific enough"
 
     monkeypatch.setattr(sa2, "_verify_promise", fails_once)
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=20, month=8))
     promises, events, tasks = recorder
     sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
             _state("I'll pay 2 lakh by 20 August."))
@@ -291,8 +316,9 @@ def test_no_customer_yields_needs_information(recorder):
 # --------------------------------------------------------------------------
 
 
-def test_recorded_promise_creates_a_reminder_task(recorder):
+def test_recorded_promise_creates_a_reminder_task(recorder, monkeypatch):
     promises, events, tasks = recorder
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=20, month=8))
     sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
             _state("I'll pay 2 lakh by 20 August."))
     assert tasks == [("reminder", date(2026, 8, 20))]
@@ -331,6 +357,7 @@ def test_verified_claim_creates_no_task(recorder, monkeypatch):
 def test_grounded_rewrite_is_used(recorder, monkeypatch):
     warm = "Thanks! We've noted you'll pay ₹200,000.00 by 20 Aug 2026. A reminder will follow."
     monkeypatch.setattr(sa1, "_llm_phrase", lambda template: warm)
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=20, month=8))
     result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
                      _state("I'll pay 2 lakh by 20 August."))
     assert result.customer_message == warm
@@ -338,6 +365,7 @@ def test_grounded_rewrite_is_used(recorder, monkeypatch):
 
 def test_rewrite_that_invents_a_figure_is_rejected(recorder, monkeypatch):
     monkeypatch.setattr(sa1, "_llm_phrase", lambda template: template + " You also owe ₹999,999.00.")
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=20, month=8))
     result = sa2.run(_task("payment_promise", entities={"amounts": [200000.0]}),
                      _state("I'll pay 2 lakh by 20 August."))
     assert "999,999.00" not in result.customer_message
@@ -351,6 +379,7 @@ def test_rewrite_that_invents_a_figure_is_rejected(recorder, monkeypatch):
 
 def test_orchestrator_routes_a_promise_to_the_real_sa2(recorder, monkeypatch):
     monkeypatch.setattr(c3, "build_customer_360", lambda cid, **kw: None)
+    monkeypatch.setattr(sa2, "_extract_due_date", lambda t: _extract(day=20, month=8))
     state = orc.handle("I'll pay 2 lakh by 20 August.", customer_id=CID, message_id="MSG-9")
     summary = orc.summarize(state)
     assert summary["agents"] == ["sa2_recovery"]

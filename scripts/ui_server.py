@@ -135,6 +135,10 @@ def get_dashboard_summary():
             "outstanding_formatted": f"₹{d['outstanding']:,.2f}",
             "open_bills": d["open_bills"],
             "ageing_bucket": f"{d['ageing_bucket']} Days",
+            "avg_settlement_days": d.get("avg_settlement_days"),
+            "avg_settlement_formatted": f"{int(d['avg_settlement_days'])} Days" if d.get("avg_settlement_days") is not None else "N/A",
+            "last_paid_formatted": d.get("last_paid_formatted") or "No payment on record",
+            "last_paid_date": d.get("last_paid_date"),
         }
         for d in snap.top_debtors
     ]
@@ -523,13 +527,89 @@ def update_promise_status(promise_id: str, body: PromiseStatusReq):
         conversation_id=doc.get("conversation_id"),
         payload={"promise_id": promise_id, "status": body.status, "note": body.note},
     )
-# ── Call Prep ────────────────────────────────────────────────────────────────
+# ── Call Prep & Dispatches ───────────────────────────────────────────────────
 
 @app.get("/api/customers/{customer_id}/call-prep")
 def get_customer_call_prep(customer_id: str, conversation_id: str | None = None):
     from ca import call_prep
     brief = call_prep.build_call_prep(customer_id, conversation_id=conversation_id)
     return brief.model_dump(mode="json")
+
+
+@app.get("/api/customers/{customer_id}/contact")
+def get_customer_contact(customer_id: str):
+    from ca import customer360
+    c = customer360.get_customer(customer_id)
+    # Also find last conversation
+    adb = app_db()
+    conv = adb["conversations"].find_one({"customer_id": customer_id}, sort=[("updated_at", -1)])
+    return {
+        "customer_id": customer_id,
+        "display_name": c.display_name,
+        "email": c.email or "",
+        "mobile": c.mobile or "",
+        "gstin": c.gstin or "",
+        "state": c.state or "",
+        "conversation_id": conv["conversation_id"] if conv else None,
+    }
+
+
+class SendSAMessageReq(BaseModel):
+    message: str
+    channel: str = "chat"
+    direction: str = "outbound"
+    conversation_id: str | None = None
+
+
+@app.post("/api/customers/{customer_id}/send-sa-message")
+def send_sa_message(customer_id: str, body: SendSAMessageReq):
+    adb = app_db()
+    conv_id = body.conversation_id
+    if not conv_id:
+        conv_doc = adb["conversations"].find_one({"customer_id": customer_id}, sort=[("updated_at", -1)])
+        if conv_doc:
+            conv_id = conv_doc["conversation_id"]
+        else:
+            conv = Conversation(customer_id=customer_id, channel=body.channel)
+            adb["conversations"].insert_one(conv.model_dump(mode="python"))
+            conv_id = conv.conversation_id
+
+    mid = new_id("message")
+    msg = Message(
+        message_id=mid,
+        external_id=mid,
+        conversation_id=conv_id,
+        customer_id=customer_id,
+        channel=body.channel,
+        direction=body.direction,
+        text=body.message,
+    )
+    adb["messages"].insert_one(msg.model_dump(mode="python"))
+    adb["conversations"].update_one(
+        {"conversation_id": conv_id},
+        {"$set": {"updated_at": utcnow()}},
+    )
+    services.record_event(
+        customer_id, "OUTBOUND_DISPATCH", "ops",
+        conversation_id=conv_id, message_id=mid,
+        payload={"channel": body.channel, "preview": body.message[:120]},
+    )
+    return {"ok": True, "conversation_id": conv_id, "message_id": mid}
+
+
+class SendEmailReq(BaseModel):
+    recipient_email: str
+    subject: str
+    body: str
+
+
+@app.post("/api/customers/{customer_id}/send-email")
+def send_customer_email(customer_id: str, req: SendEmailReq):
+    services.record_event(
+        customer_id, "EMAIL_DISPATCHED", "ops",
+        payload={"recipient": req.recipient_email, "subject": req.subject, "body_preview": req.body[:150]},
+    )
+    return {"ok": True, "recipient": req.recipient_email, "sent_at": utcnow().isoformat()}
 
 
 # ── Vouchers (raw MongoDB browser) ──────────────────────────────────────────

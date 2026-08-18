@@ -310,6 +310,8 @@ def verify_value(claim: ExtractedValue | None, message: str) -> float | None:
     span = claim.text.strip()
     if span.lower() not in message.lower():
         return None
+    if "%" in span or "percent" in span.lower():
+        return None  # a percentage is never a money amount, prompt slip-through guard
     return parse_number(span)
 
 
@@ -317,7 +319,9 @@ EXTRACTION_RULES = (
     "\n\n### Extraction:\n"
     "For each request also return, when present in the message:\n"
     "- amount: a money figure. `text` MUST be copied verbatim from the message "
-    "(e.g. \"1,50,000\", \"2 lakh\"), `value` its numeric value.\n"
+    "(e.g. \"1,50,000\", \"2 lakh\"), `value` its numeric value. A percentage "
+    "(\"8%\", \"8 percent\") is NOT an amount — never put it in `amount`, "
+    "even if it is the only number in the message.\n"
     "- quantity: a count of goods with its unit (e.g. text \"15 bundle\", "
     "value 15, unit \"bundle\"). Any unit is allowed - bundle, bori, peti, "
     "bottles, jackets, cartons.\n"
@@ -827,25 +831,30 @@ def _has_open_case(conversation_id: str | None) -> bool:
     ))
 
 
-_RECENT_DISPUTE_WINDOW = 3
+_RECENT_INTENT_WINDOW = 3
 
 
-def _recent_dispute_turn(conversation_id: str | None) -> bool:
-    """Whether any of the last few prior turns in this conversation was
-    itself classified `dispute` — the signal `_has_open_case` misses. SA-3
-    only opens a `Case` once it has enough to act on; its first reply to a
-    fresh complaint is just a follow-up question (`sa3_dispute.py`), so the
-    turn right after that complaint — the one most likely to be a bare
-    invoice number or a terse amount — has no case yet to check. This is what
-    actually broke in evals/reports/dispute_approval_scenarios.md, Finding 1:
-    S1, S4 and S5 all lost the dispute thread on exactly that turn.
+def _recent_intent_turn(conversation_id: str | None, intent: str, window: int) -> bool:
+    """Whether any of the last `window` prior turns in this conversation was
+    itself classified `intent` — the signal `_has_open_case` misses for
+    dispute, and payment_promise has no persisted-doc signal at all until
+    both amount and date are known. SA-3 only opens a `Case` once it has
+    enough to act on; its first reply to a fresh complaint is just a
+    follow-up question (`sa3_dispute.py`), so the turn right after that
+    complaint — the one most likely to be a bare invoice number or a terse
+    amount — has no case yet to check. Same shape for SA-2: "confirm the
+    amount you'll be paying?" followed by a bare "12000" has no
+    `payment_promises` doc yet either (`record_promise` only writes one once
+    amount AND date are both known). This is what actually broke in
+    evals/reports/dispute_approval_scenarios.md, Finding 1: S1, S4 and S5 all
+    lost the dispute thread on exactly that turn.
 
-    Checks the last `_RECENT_DISPUTE_WINDOW` turns, not just the immediately
-    prior one: a single-turn lookback still missed S4, where the bare-voucher
-    turn right after the complaint itself gets classified `document_request`
-    (not `dispute`), so the *next* turn's lookback landed on that miss
-    instead of the complaint before it. A bounded window (not "ever in this
-    conversation") keeps a dispute resolved 20 turns ago from biasing an
+    Checks the last `window` turns, not just the immediately prior one: a
+    single-turn lookback still missed S4, where the bare-voucher turn right
+    after the complaint itself gets classified `document_request` (not
+    `dispute`), so the *next* turn's lookback landed on that miss instead of
+    the complaint before it. A bounded window (not "ever in this
+    conversation") keeps an intent resolved 20 turns ago from biasing an
     unrelated later turn."""
     if not conversation_id:
         return False
@@ -861,8 +870,8 @@ def _recent_dispute_turn(conversation_id: str | None) -> bool:
     # `scripts/ui_server.py`), but has no classification yet, so this filter
     # is what keeps "most recent" meaning the *prior* turns, not this one.
     classified = [m for m in msgs if m.direction == "inbound" and (m.metadata or {}).get("classification")]
-    recent = classified[-_RECENT_DISPUTE_WINDOW:]
-    return any("dispute" in m.metadata["classification"].get("intents", []) for m in recent)
+    recent = classified[-window:]
+    return any(intent in m.metadata["classification"].get("intents", []) for m in recent)
 
 
 def _conversation_context(conversation_id: str | None) -> dict[str, Any]:
@@ -922,7 +931,9 @@ def classify_intent(
     config = _config(config)
     classifier: Classifier = config.get("classifier") or default_classifier()
     history = format_recent_history(state.conversation_id)
-    if _has_open_case(state.conversation_id) or _recent_dispute_turn(state.conversation_id):
+    if _has_open_case(state.conversation_id) or _recent_intent_turn(
+        state.conversation_id, "dispute", _RECENT_INTENT_WINDOW
+    ):
         # Bias, not override — a terse follow-up ("URD/113/8443", "settle for
         # 200") reads as a fresh, unrelated request without this; it must
         # still lose to a message that's actually about something else.
@@ -934,6 +945,17 @@ def classify_intent(
             "current message is clearly about something else, classify it as continuing "
             "that dispute (intent \"dispute\") rather than as a document request or a "
             "fresh, unrelated ask — even if it is just a bare invoice number or an amount.]"
+        )
+    if _recent_intent_turn(state.conversation_id, "payment_promise", _RECENT_INTENT_WINDOW):
+        # Same bias, for SA-2: a bare "12000" answering "confirm the amount
+        # you'll be paying?" reads as an unrelated account enquiry without
+        # this — and lands on sa1_general's "I could not find the answer to
+        # your question" instead of completing the promise.
+        history += (
+            "\n\n[This conversation has an unresolved payment promise being confirmed. "
+            "Unless the current message is clearly about something else, classify it as "
+            "continuing that promise (intent \"payment_promise\") rather than a fresh, "
+            "unrelated ask — even if it is just a bare amount or date.]"
         )
     context = {"history": history, "conversation_id": state.conversation_id, **config.get("case_context", {})}
     intents = classifier(state.message, context)

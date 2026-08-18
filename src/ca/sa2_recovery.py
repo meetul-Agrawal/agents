@@ -17,11 +17,14 @@ Where the numbers come from, and why it is safe:
 * the **amount** is the verified figure the orchestrator already extracted — SA-2
   never re-reads it from the message, so there is one extraction, not two that
   can disagree;
-* the **due date** is parsed here deterministically (`parse_due_date`) from the
-  message text — our arithmetic, never the model's guess;
+* the **due date**'s open-ended phrasing is read by the model (`_extract_due_date`),
+  but the `date` itself is always computed here (`parse_due_date`) from the
+  structured fields it returns — a day count, a weekday, a day/month/year —
+  never a date the model produced directly;
 * the **receipts** come from `customer360`.
 
-No LLM produces a figure that reaches the customer or the store.
+No LLM produces a date or money figure directly — only structured fields our
+own arithmetic turns into one.
 
 ponytail: reply is templated (no phrasing pass) and no follow-up `create_task`
 is emitted — the next action is stated in the reply. Add either if a Phase-5
@@ -44,15 +47,10 @@ from .sa1_general import _inr, _fmt_date, _phrase, _read  # reuse, don't reimple
 
 
 # --------------------------------------------------------------------------
-# Deterministic due-date parsing — our arithmetic, never the model's
+# Due-date parsing — the model reads the open-ended phrasing, the date itself
+# is always our arithmetic, never the model's guess.
 # --------------------------------------------------------------------------
 
-_MONTHS: dict[str, int] = {
-    m: i for i, m in enumerate(
-        ["january", "february", "march", "april", "may", "june", "july",
-         "august", "september", "october", "november", "december"], start=1)
-}
-_MONTHS.update({name[:3]: i for name, i in list(_MONTHS.items())})  # jan..dec
 _WEEKDAYS = {d: i for i, d in enumerate(
     ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"])}
 
@@ -61,97 +59,97 @@ _UNABLE = re.compile(
     r"don'?t have (the )?money|struggling to pay|out of funds)\b", re.I)
 
 
-def _roll(d: date, today: date) -> date:
-    """A bare day/month with no year means the next such date, not one in the
-    past: '10 January' asked in August is next January."""
-    return d.replace(year=d.year + 1) if d < today else d
+class _DueDateExtract(ModelOutput):
+    relative_days: int | None = None
+    weekday: str | None = None
+    end_of_month: bool = False
+    day: int | None = None
+    month: int | None = None
+    year: int | None = None
+
+
+_DATE_SYSTEM = (
+    "Extract the payment due date the customer names or corrects. Return ONLY the "
+    "fields that apply from their message; leave the rest null/false.\n"
+    "- relative_days: an offset in days from today. 'today'=0, 'tomorrow'=1, "
+    "'day after tomorrow'=2, 'in N days'/'after N days'/'within N days'=N, "
+    "'next week'=7. This is a COUNT of days, never a day-of-month — "
+    "'after 12 days' is relative_days=12, NOT day=12.\n"
+    "- weekday: one of monday..sunday, if a weekday is named ('next Friday', "
+    "'by Monday'). Always the NEXT such day, never today.\n"
+    "- end_of_month: true only for 'end of month' / 'month-end'.\n"
+    "- day: an explicit day-of-month ('the 26th', 'on 20', '20 August' -> day=20).\n"
+    "- month: 1-12, only if a month name or a slash/ISO date names one.\n"
+    "- year: only if a 4-digit year is explicitly stated.\n"
+    "If a date is superseded ('instead of 13 September, the 20th'), extract only "
+    "the new one. Never guess a field that isn't stated in the text."
+)
 
 
 def parse_due_date(text: str, today: date) -> date | None:
-    """Best-effort parse of a promise deadline. Handles the phrasings this desk
-    actually sees; returns None when it cannot be sure.
+    """The customer's phrasing ('by the 23rd', 'after 12 days', 'next Friday',
+    'instead of the 13th, the 20th') is open-ended — read by the model
+    (`_extract_due_date`) rather than a growing regex vocabulary, one branch
+    per phrasing report. The date is still always computed here: the model
+    returns structured fields (a day count, a weekday, a day/month/year), this
+    function turns them into a `date`. A hallucinated date has nowhere to
+    enter — only a day count/weekday/day-of-month can, and each is checked
+    against the calendar before use.
 
-    ponytail: hand-rolled, not dateutil — the vocabulary is small and adding a
-    dependency for it is not worth it. Add dateutil if free-text dates broaden.
-    """
-    t = (text or "").lower()
+    ponytail: this replaced ~15 hand-rolled regex branches (see git history)
+    that kept growing one phrasing at a time — a fixed pattern list is exactly
+    the kind of open-ended judgement call a model handles and a list can't
+    keep up with. No LLM available (`CA_PHRASE=off`, no provider) -> None,
+    same as "could not parse"; the caller already asks for clarification."""
+    if not (text or "").strip():
+        return None
+    extract = _extract_due_date(text)
+    if extract is None:
+        return None
 
-    if re.search(r"\bday after tomorrow\b", t):
-        return today + timedelta(days=2)
-    if re.search(r"\btomorrow\b", t):
-        return today + timedelta(days=1)
-    if re.search(r"\btoday\b", t):
-        return today
-    m = re.search(r"\bin (\d{1,3}) days?\b", t)
-    if m:
-        return today + timedelta(days=int(m.group(1)))
-    if re.search(r"\bnext week\b", t):
-        return today + timedelta(days=7)
-    if re.search(r"\b(end of (the )?month|month[- ]end)\b", t):
+    if extract.relative_days is not None:
+        return today + timedelta(days=extract.relative_days)
+    if extract.weekday in _WEEKDAYS:
+        delta = (_WEEKDAYS[extract.weekday] - today.weekday()) % 7
+        return today + timedelta(days=delta or 7)  # the next one, never today
+    if extract.end_of_month:
         first_next = date(today.year + (today.month == 12), (today.month % 12) + 1, 1)
         return first_next - timedelta(days=1)
-    m = re.search(r"\b(?:by |next )?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b", t)
-    if m:
-        delta = (_WEEKDAYS[m.group(1)] - today.weekday()) % 7
-        return today + timedelta(days=delta or 7)  # the next one, never today
-
-    m = re.search(r"\b(\d{4})-(\d{1,2})-(\d{1,2})\b", t)  # ISO
-    if m:
+    if extract.day is not None:
+        month = extract.month or today.month
         try:
-            return date(int(m[1]), int(m[2]), int(m[3]))
+            candidate = date(extract.year or today.year, month, extract.day)
         except ValueError:
             return None
-
-    # Identify if a month is mentioned anywhere in the message to provide context
-    month_match = re.search(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b", t)
-    target_month = _MONTHS[month_match.group(1)[:3]] if month_match else today.month
-
-    # Strip out explicitly negated/superseded dates like "instead of 13 September"
-    cleaned = re.sub(r"\b(?:instead of|not on|rather than)\s+(?:\d{1,2}(?:st|nd|rd|th)?\s+[a-z]+|[a-z]+\s+\d{1,2}(?:st|nd|rd|th)?|\d{1,2}(?:st|nd|rd|th)?)\b", "", t)
-
-    # Scan every "20 August" / "August 20" candidate in cleaned text
-    for m in re.finditer(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})\b", cleaned):  # 20 August
-        if m.group(2)[:3] in _MONTHS:
+        if extract.year is None and candidate < today:
+            # No year given and the date's already past: next occurrence.
+            # A named month stays that month, next year; an unnamed one just
+            # rolls to next month.
+            next_month = month if extract.month else (month % 12 + 1)
             try:
-                return _roll(date(today.year, _MONTHS[m.group(2)[:3]], int(m.group(1))), today)
-            except ValueError:
-                pass
-    for m in re.finditer(r"\b([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?\b", cleaned):  # August 20
-        if m.group(1)[:3] in _MONTHS:
-            try:
-                return _roll(date(today.year, _MONTHS[m.group(1)[:3]], int(m.group(2))), today)
-            except ValueError:
-                pass
-
-    m = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b", cleaned)  # 25/08 or 25-08-2026
-    if m:
-        day, month, year = int(m[1]), int(m[2]), m[3]
-        try:
-            if year:
-                y = int(year)
-                return date(y + 2000 if y < 100 else y, month, day)
-            return _roll(date(today.year, month, day), today)
-        except ValueError:
-            return None
-
-    # A bare day-of-month ("by the 23rd" or "by 20th") inherits the month context if a month was named,
-    # or the current/next month.
-    m = re.search(r"\b(?:by|on|till|before)\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b", cleaned)
-    if m:
-        day = int(m.group(1))
-        try:
-            candidate = date(today.year, target_month, day)
-        except ValueError:
-            return None
-        if candidate < today:
-            next_month = target_month % 12 + 1 if not month_match else target_month
-            next_year = today.year + 1
-            try:
-                candidate = date(next_year, next_month, day)
+                candidate = date(today.year + 1, next_month, extract.day)
             except ValueError:
                 return None
         return candidate
     return None
+
+
+def _extract_due_date(text: str) -> _DueDateExtract | None:
+    import os
+
+    from . import llm
+
+    if os.getenv("CA_PHRASE", "on").lower() == "off" or not llm.available():
+        return None
+    try:
+        return llm.complete_structured(
+            _DueDateExtract, _DATE_SYSTEM, json.dumps({"customer_message": text}),
+            capability="summarization",
+            example={"relative_days": 12, "weekday": None, "end_of_month": False,
+                     "day": None, "month": None, "year": None},
+        )
+    except llm.LLMUnavailable:
+        return None
 
 
 # --------------------------------------------------------------------------
