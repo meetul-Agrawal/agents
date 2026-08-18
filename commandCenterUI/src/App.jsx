@@ -2,6 +2,22 @@ import React, { useState, useEffect } from 'react'
 
 const api = {
   get: url => fetch(url).then(r => r.json()),
+  post: (url, body) => fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {}),
+  }).then(r => r.json()),
+}
+
+// Generic key/value renderer for approval `context` and dispute `evidence`
+// entries — their shape varies by agent (SA-3/SA-4 add fields over time), so
+// this shows whatever is there instead of hardcoding each field.
+const labelize = key => key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
+const formatValue = (key, val) => {
+  if (val == null || val === '') return '—'
+  if (Array.isArray(val)) return val.length ? val.join(', ') : '—'
+  if (typeof val === 'number') return /amount|outstanding/i.test(key) ? `₹${val.toLocaleString()}` : val.toLocaleString()
+  return String(val)
 }
 
 export default function App() {
@@ -18,6 +34,56 @@ export default function App() {
 
   // Active navigation view tab
   const [activeTab, setActiveTab] = useState('overview') // 'overview' | 'fleet' | 'portfolio' | 'stream'
+
+  // Human Supervisory Tasks modal
+  const [hitlOpen, setHitlOpen] = useState(false)
+  const [hitlTab, setHitlTab] = useState('approvals') // 'approvals' | 'disputes' | 'promises'
+  const [hitlLoading, setHitlLoading] = useState(false)
+  const [hitlData, setHitlData] = useState({ approvals: [], disputes: [], promises: [] })
+  const [hitlBusyId, setHitlBusyId] = useState(null)
+  const [noteDrafts, setNoteDrafts] = useState({}) // id -> ops' note, sent verbatim to the customer
+
+  function loadHitl() {
+    setHitlLoading(true)
+    Promise.all([
+      api.get('/api/approvals?status=pending'),
+      api.get('/api/disputes?status=all'),
+      api.get('/api/promises?status=promised'),
+    ])
+      .then(([approvals, disputes, promises]) => setHitlData({ approvals, disputes, promises }))
+      .catch(err => console.error('HITL fetch failure:', err))
+      .finally(() => setHitlLoading(false))
+  }
+
+  function openHitl() {
+    setHitlOpen(true)
+    loadHitl()
+  }
+
+  async function decideApproval(approvalId, approved) {
+    setHitlBusyId(approvalId)
+    try {
+      // note goes to the customer verbatim, never through the LLM — decision_message()
+      // hardcodes the verdict sentence on purpose (see sa4_approval.py docstring).
+      await api.post(`/api/approvals/${approvalId}/decide`, { approved, note: noteDrafts[approvalId] || '' })
+      loadHitl()
+      loadDashboard()
+    } finally {
+      setHitlBusyId(null)
+    }
+  }
+
+  async function resolveDispute(caseId, outcome) {
+    setHitlBusyId(caseId)
+    try {
+      const note = noteDrafts[caseId] || ''
+      await api.post(`/api/disputes/${caseId}/resolve`, { outcome, resolution: note, note })
+      loadHitl()
+      loadDashboard()
+    } finally {
+      setHitlBusyId(null)
+    }
+  }
 
   function loadDashboard() {
     setLoading(true)
@@ -165,13 +231,13 @@ export default function App() {
             </div>
             <div className="cc-hero-number">{metrics.autonomous_resolution_rate || 88.4}%</div>
             <div className="cc-hero-footnote">
-              <span className="tag-metric tag-indigo">16 DAYS</span>
+              <span className="tag-metric tag-indigo">{metrics.avg_settlement_days ?? 16} DAYS</span>
               <span>Average portfolio settlement speed</span>
             </div>
           </div>
 
           {/* Company-Wide HITL Attention */}
-          <div className="cc-hero-card">
+          <div className="cc-hero-card" onClick={openHitl} style={{ cursor: 'pointer' }} title="View approvals, disputes & promises">
             <div className="cc-card-eyebrow">
               <span className="cc-card-label">Human Supervisory Tasks</span>
               <span className="cc-card-code">HITL-04</span>
@@ -521,6 +587,151 @@ export default function App() {
                   </div>
                 </>
               ) : null}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Human Supervisory Tasks Modal ── */}
+      {hitlOpen && (
+        <div className="modal-overlay" onClick={() => setHitlOpen(false)}>
+          <div className="modal-dialog" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
+              <div>
+                <div className="modal-head-title">Human Supervisory Tasks</div>
+                <div className="modal-head-sub">Approvals, disputes & payment promises awaiting action</div>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button className="btn-copy-script" onClick={loadHitl} disabled={hitlLoading}>
+                  {hitlLoading ? '[LOADING]' : '[RELOAD]'}
+                </button>
+                <button className="btn-modal-close" onClick={() => setHitlOpen(false)}>[✕]</button>
+              </div>
+            </div>
+
+            <div className="modal-content-scroll">
+              <div className="script-tab-cluster">
+                <button className={`script-tab-item${hitlTab === 'approvals' ? ' active' : ''}`} onClick={() => setHitlTab('approvals')}>
+                  APPROVALS ({hitlData.approvals.length})
+                </button>
+                <button className={`script-tab-item${hitlTab === 'disputes' ? ' active' : ''}`} onClick={() => setHitlTab('disputes')}>
+                  DISPUTES ({hitlData.disputes.length})
+                </button>
+                <button className={`script-tab-item${hitlTab === 'promises' ? ' active' : ''}`} onClick={() => setHitlTab('promises')}>
+                  PROMISES ({hitlData.promises.length})
+                </button>
+              </div>
+
+              {hitlTab === 'approvals' && (
+                hitlData.approvals.length === 0
+                  ? <div style={{ color: 'var(--ink-secondary)', textAlign: 'center', padding: '28px', fontFamily: 'var(--font-mono)' }}>No pending approvals</div>
+                  : hitlData.approvals.map(a => (
+                    <div key={a.approval_id} style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-whisper)', borderRadius: '6px', padding: '12px 14px', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div style={{ fontWeight: 700, fontSize: '13px' }}>{a.customer_name}</div>
+                        {a.amount != null && (
+                          <div style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--telemetry-amber)' }}>
+                            ₹{a.amount.toLocaleString()}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '12px', marginTop: '4px' }}>
+                        <strong>Asking for:</strong> {labelize(a.type)}{a.amount != null ? ` of ₹${a.amount.toLocaleString()}` : ''}
+                      </div>
+                      {a.recommendation && (
+                        <div style={{ fontSize: '12px', marginTop: '4px', color: 'var(--ink-secondary)' }}>{a.recommendation}</div>
+                      )}
+                      <textarea
+                        placeholder="Note to the customer (sent verbatim with the decision)…"
+                        value={noteDrafts[a.approval_id] || ''}
+                        onChange={e => setNoteDrafts(prev => ({ ...prev, [a.approval_id]: e.target.value }))}
+                        style={{ width: '100%', marginTop: '8px', minHeight: '54px', fontSize: '12px', fontFamily: 'inherit', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-whisper)', resize: 'vertical', boxSizing: 'border-box' }}
+                      />
+                      <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                        <button className="btn-call-prep-trigger" disabled={hitlBusyId === a.approval_id} onClick={() => decideApproval(a.approval_id, true)}>
+                          [APPROVE]
+                        </button>
+                        <button className="btn-call-prep-trigger" disabled={hitlBusyId === a.approval_id} onClick={() => decideApproval(a.approval_id, false)}>
+                          [REJECT]
+                        </button>
+                      </div>
+                    </div>
+                  ))
+              )}
+
+              {hitlTab === 'disputes' && (
+                hitlData.disputes.length === 0
+                  ? <div style={{ color: 'var(--ink-secondary)', textAlign: 'center', padding: '28px', fontFamily: 'var(--font-mono)' }}>No open disputes</div>
+                  : hitlData.disputes.map(d => (
+                    <div key={d.case_id} style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-whisper)', borderRadius: '6px', padding: '12px 14px', marginBottom: '8px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                        <div>
+                          <div style={{ fontWeight: 700, fontSize: '13px' }}>{d.customer_name}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--ink-secondary)', marginTop: '2px' }}>
+                            {d.type} · {d.priority} priority · {d.status}
+                          </div>
+                        </div>
+                        <span className={`tag-metric ${d.priority === 'critical' || d.priority === 'high' ? 'tag-rose' : 'tag-amber'}`}>
+                          {d.status}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px', marginTop: '6px' }}>{d.title}</div>
+                      {d.evidence && d.evidence.length > 0 && (
+                        <div style={{ marginTop: '8px' }}>
+                          {d.evidence.map((ev, i) => (
+                            <div key={i} style={{ background: 'var(--surface-pure)', border: '1px solid var(--border-whisper)', borderRadius: '4px', padding: '8px 10px', marginTop: i ? '6px' : 0 }}>
+                              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--accent-primary)', marginBottom: '4px' }}>{labelize(ev.type || 'evidence')}</div>
+                              {Object.entries(ev).filter(([k]) => k !== 'type').map(([k, v]) => (
+                                <div key={k} style={{ fontSize: '11px' }}>
+                                  <span style={{ color: 'var(--ink-secondary)' }}>{labelize(k)}:</span> {formatValue(k, v)}
+                                </div>
+                              ))}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {d.resolution && (
+                        <div style={{ fontSize: '11px', color: 'var(--ink-secondary)', marginTop: '6px' }}><strong>Resolution:</strong> {d.resolution}</div>
+                      )}
+                      {['open', 'investigating', 'waiting'].includes(d.status) && (
+                        <>
+                          <textarea
+                            placeholder="Note to the customer (sent verbatim with the outcome)…"
+                            value={noteDrafts[d.case_id] || ''}
+                            onChange={e => setNoteDrafts(prev => ({ ...prev, [d.case_id]: e.target.value }))}
+                            style={{ width: '100%', marginTop: '8px', minHeight: '54px', fontSize: '12px', fontFamily: 'inherit', padding: '8px', borderRadius: '4px', border: '1px solid var(--border-whisper)', resize: 'vertical', boxSizing: 'border-box' }}
+                          />
+                          <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                            <button className="btn-call-prep-trigger" disabled={hitlBusyId === d.case_id} onClick={() => resolveDispute(d.case_id, 'solved')}>
+                              [MARK SOLVED]
+                            </button>
+                            <button className="btn-call-prep-trigger" disabled={hitlBusyId === d.case_id} onClick={() => resolveDispute(d.case_id, 'dropped')}>
+                              [DROP]
+                            </button>
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  ))
+              )}
+
+              {hitlTab === 'promises' && (
+                hitlData.promises.length === 0
+                  ? <div style={{ color: 'var(--ink-secondary)', textAlign: 'center', padding: '28px', fontFamily: 'var(--font-mono)' }}>No active promises</div>
+                  : hitlData.promises.map(p => (
+                    <div key={p.promise_id} style={{ background: 'var(--surface-subtle)', border: '1px solid var(--border-whisper)', borderRadius: '6px', padding: '12px 14px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: '13px' }}>{p.customer_name}</div>
+                        <div style={{ fontSize: '11px', color: 'var(--ink-secondary)', marginTop: '2px' }}>
+                          Due {p.due_date} · {p.status}
+                        </div>
+                      </div>
+                      <div style={{ fontWeight: 800, fontFamily: 'var(--font-mono)', color: 'var(--accent-primary)' }}>
+                        ₹{p.amount.toLocaleString()}
+                      </div>
+                    </div>
+                  ))
+              )}
             </div>
           </div>
         </div>
