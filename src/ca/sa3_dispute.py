@@ -62,7 +62,7 @@ from typing import Any
 from . import customer360 as c3
 from . import services
 from .contracts import AgentResult, AgentTask, Case, CustomerAssistState, ProposedAction, ToolCall
-from .sa1_general import _fmt_date, _inr, _match_product, _phrase, _read, compose_grounded
+from .sa1_general import _collect_items, _fmt_date, _inr, _match_product, _phrase, _read, compose_grounded
 
 
 def _dispute_signal(entities: dict[str, Any]) -> tuple[bool, str | None]:
@@ -244,10 +244,35 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     about_balance, issue_label = _dispute_signal(entities)
     item_hint = entities.get("dispute_item")
 
-    # Nothing concrete to check: no invoice cited, and the complaint is not
-    # about the balance itself (where the balance IS the relevant evidence).
-    # Ask for the specifics instead of opening an empty case or answering with
-    # an unrelated figure — this is the fix for the ₹1+ crore balance dump.
+    # No invoice cited, but an item was named (e.g. "issue in aata"): fuzzy-match
+    # it against this customer's own purchase history the same way `_sales` does,
+    # and resolve to that item's most recent invoice so the flow below can run
+    # without the customer having to dig up an invoice number themselves. A tie
+    # (multiple variants, e.g. several "aata" SKUs) is a genuine ambiguity — ask
+    # which exact item, don't silently guess and don't re-ask for everything.
+    if not voucher_numbers and not about_balance and item_hint:
+        rows = _read(calls, "get_sales_history", lambda: c3.get_sales_history(cid), customer_id=cid) or []
+        items = _collect_items(rows)
+        matches = _match_product(item_hint, items.keys())
+        if len(matches) == 1:
+            voucher_numbers = [items[matches[0]]["voucher"]]
+        elif len(matches) > 1:
+            composed = compose_grounded(
+                "Write a short reply asking the customer exactly which of these items "
+                "they mean, so we can look into their complaint.",
+                {"candidates": matches},
+            )
+            ask = composed or _phrase(
+                f"We found a few items matching that — did you mean "
+                f"{', '.join(matches)}? Let us know which one and we'll open a case."
+            )
+            return result("needs_information", ask, calls)
+
+    # Nothing concrete to check: no invoice cited (or resolved above), and the
+    # complaint is not about the balance itself (where the balance IS the
+    # relevant evidence). Ask for the specifics instead of opening an empty case
+    # or answering with an unrelated figure — this is the fix for the ₹1+ crore
+    # balance dump.
     if not voucher_numbers and not about_balance:
         composed = compose_grounded(
             "Write a short reply asking the customer for the invoice number, "
