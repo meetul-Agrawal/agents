@@ -30,6 +30,15 @@ _SNAPSHOT_TTL_SECONDS = 300
 _snapshot_cache: dict[str, Any] = {"data": None, "at": 0.0}
 _HITL_AGENTS = {"sa3_dispute", "sa4_approval", "sa6_return"}
 
+# What each agent's event card shows: label (with avatar initials baked in),
+# accent color (matches the existing tag-metric palette), and which HITL tab
+# a "view" quick-button should jump to.
+_AGENT_EVENT_META = {
+    "sa2_recovery": {"agent_label": "Payment Promise Agent (SA-2)", "color": "indigo", "tab": "promises"},
+    "sa3_dispute": {"agent_label": "Dispute Agent (SA-3)", "color": "rose", "tab": "disputes"},
+    "sa4_approval": {"agent_label": "Approval Agent (SA-4)", "color": "amber", "tab": "approvals"},
+}
+
 
 def _company_snapshot():
     import time as _time
@@ -100,40 +109,20 @@ def get_dashboard_summary():
     disputes_cnt = adb["cases"].count_documents({"status": {"$in": ["open", "investigating", "waiting"]}})
     promises_cnt = adb["payment_promises"].count_documents({"status": "promised"})
 
-    # Omnichannel company message activity
+    # Omnichannel company message activity — feeds agent_counts only, the
+    # per-message text isn't shown anymore (see agent event feed below).
     msgs = list(adb["messages"].find({}).sort("timestamp", -1).limit(30))
-    cids = list({m.get("customer_id") for m in msgs if m.get("customer_id")})
-    names = _customer_names(cids)
-
-    activity_stream = []
     agent_counts: dict[str, int] = {
         "sa1_general": 0, "sa2_recovery": 0, "sa3_dispute": 0,
         "sa4_approval": 0, "sa5_order": 0, "sa6_return": 0,
         "sa7_health": 0, "sa8_call_prep": 0,
     }
-
     for m in msgs:
-        meta = m.get("metadata") or {}
-        cls_data = meta.get("classification") or {}
-        agents = cls_data.get("agents") or []
-        for a in agents:
-            if a in agent_counts:
-                agent_counts[a] += 1
-            else:
-                agent_counts[a] = 1
+        cls_data = (m.get("metadata") or {}).get("classification") or {}
+        for a in cls_data.get("agents") or []:
+            agent_counts[a] = agent_counts.get(a, 0) + 1
 
-        cust_name = names.get(m.get("customer_id"), "Trade Counterparty")
-        activity_stream.append({
-            "message_id": m.get("message_id"),
-            "customer_id": m.get("customer_id"),
-            "customer_name": cust_name,
-            "direction": m.get("direction"),
-            "text": m.get("text", "")[:120],
-            "intent": cls_data.get("intent") or (cls_data.get("intents", [""])[0] if cls_data.get("intents") else "general_enquiry"),
-            "agents": agents,
-            "timestamp": m.get("timestamp").isoformat() if isinstance(m.get("timestamp"), datetime) else str(m.get("timestamp")),
-            "status": (cls_data.get("statuses") or ["completed"])[0],
-        })
+    activity_stream = _agent_event_feed(adb)
 
     # High Exposure Portfolio Debtors — real top-N by company-wide outstanding,
     # not per-customer detail, so only what compute_portfolio_snapshot() knows.
@@ -313,6 +302,64 @@ def _customer_names(customer_ids: list[str]) -> dict[str, str]:
         return {}
     docs = tenant_db()["ledgers"].find({"_id": {"$in": oids}}, {"ledgerName": 1})
     return {str(d["_id"]): d.get("ledgerName", "") for d in docs}
+
+
+def _labelize(key: str) -> str:
+    return key.replace("_", " ").title()
+
+
+def _agent_event_feed(adb, limit: int = 12) -> list[dict]:
+    """Chat-style feed of what SA-2/3/4 actually decided — one card per case,
+    approval or promise, newest first — instead of raw inbound message text."""
+    cases = list(adb["cases"].find({}).sort("created_at", -1).limit(limit))
+    approvals = list(adb["approvals"].find({}).sort("created_at", -1).limit(limit))
+    promises = list(adb["payment_promises"].find({}).sort("updated_at", -1).limit(limit))
+
+    cids = [d["customer_id"] for d in [*cases, *approvals, *promises]]
+    names = _customer_names(cids)
+
+    def cust(d):
+        return names.get(d["customer_id"], "Trade Counterparty")
+
+    events = []
+    for c in cases:
+        meta = _AGENT_EVENT_META["sa3_dispute"]
+        events.append({
+            "event_id": c["case_id"], "agent": "sa3_dispute", **meta,
+            "customer_name": cust(c), "timestamp": c["created_at"],
+            "headline": f"Case {c['case_id']} opened for {cust(c)}",
+            "detail": f"Reason: {c['title']}",
+            "ref_type": meta["tab"], "ref_id": c["case_id"],
+        })
+    for a in approvals:
+        meta = _AGENT_EVENT_META["sa4_approval"]
+        amt = f" of ₹{a['amount']:,.0f}" if a.get("amount") is not None else ""
+        events.append({
+            "event_id": a["approval_id"], "agent": "sa4_approval", **meta,
+            "customer_name": cust(a), "timestamp": a["created_at"],
+            "headline": f"Approval {a['approval_id']} requested for {cust(a)}",
+            "detail": f"Reason: {_labelize(a['type'])}{amt}" + (f" — {a['recommendation']}" if a.get("recommendation") else ""),
+            "ref_type": meta["tab"], "ref_id": a["approval_id"],
+        })
+    for p in promises:
+        meta = _AGENT_EVENT_META["sa2_recovery"]
+        modified = p.get("updated_at") and p["updated_at"] > p["created_at"]
+        headline = (
+            f"{cust(p)} modified their commitment — now ₹{p['amount']:,.0f} by {p['due_date']}"
+            if modified else
+            f"{cust(p)} committed to pay ₹{p['amount']:,.0f} by {p['due_date']}"
+        )
+        events.append({
+            "event_id": p["promise_id"], "agent": "sa2_recovery", **meta,
+            "customer_name": cust(p), "timestamp": p["updated_at"] or p["created_at"],
+            "headline": headline, "detail": f"Status: {_labelize(p['status'])}",
+            "ref_type": meta["tab"], "ref_id": p["promise_id"],
+        })
+
+    events.sort(key=lambda e: e["timestamp"], reverse=True)
+    for e in events[:limit]:
+        e["timestamp"] = e["timestamp"].isoformat() if isinstance(e["timestamp"], datetime) else str(e["timestamp"])
+    return events[:limit]
 
 
 @app.get("/api/approvals")

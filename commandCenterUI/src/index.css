@@ -541,6 +541,79 @@ body {
   font-family: var(--font-mono);
 }
 
+/* Agent Event Feed — WhatsApp-style rows: avatar + bubble */
+.cc-event-feed {
+  gap: 10px;
+}
+
+.cc-event-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.cc-event-avatar {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+  font-family: var(--font-mono);
+}
+
+.cc-event-bubble {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-whisper);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cc-event-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-primary);
+}
+
+.cc-event-headline {
+  font-size: 13px;
+  color: var(--ink-primary);
+  line-height: 1.4;
+}
+
+.cc-event-detail {
+  font-size: 12px;
+  color: var(--ink-secondary);
+}
+
+.cc-event-jump {
+  align-self: flex-start;
+  margin-top: 4px;
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: var(--accent-primary);
+  cursor: pointer;
+}
+
+.cc-event-jump:hover {
+  text-decoration: underline;
+}
+
 /* ── 4. Secondary Analysis Grid ── */
 .cc-secondary-split {
   display: grid;

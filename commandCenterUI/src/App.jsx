@@ -318,42 +318,44 @@ export default function App() {
             </div>
           </div>
 
-          {/* Panel 2: Live Inbound Stream */}
+          {/* Panel 2: Agent Event Feed */}
           <div className="cc-panel-box">
             <div className="cc-panel-header">
               <div className="cc-panel-title">
-                <span className="cc-title-prefix">[STREAM / AUDIT]</span>
-                <span>Omnichannel Message Ingestion</span>
+                <span className="cc-title-prefix">[FLEET ACTIVITY]</span>
+                <span>Agent Event Feed</span>
               </div>
               <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--ink-secondary)' }}>
-                Live customer transactions
+                What SA-2/3/4 decided
               </span>
             </div>
 
-            <div className="cc-panel-scroll">
+            <div className="cc-panel-scroll cc-event-feed">
               {stream.length === 0 && (
                 <div style={{ color: 'var(--ink-secondary)', textAlign: 'center', padding: '28px', fontFamily: 'var(--font-mono)' }}>
-                  No inbound stream records
+                  No agent events yet
                 </div>
               )}
-              {stream.slice(0, 8).map((item, idx) => (
-                <div key={item.message_id || idx} className="cc-stream-card">
-                  <div className="cc-stream-heading">
-                    <span>{item.customer_name}</span>
-                    <span className="cc-stream-ts">
-                      {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </span>
+              {stream.map((item, idx) => (
+                <div key={item.event_id || idx} className="cc-event-row">
+                  <div className={`cc-event-avatar tag-${item.color}`} title={item.agent_label}>
+                    {item.agent.replace(/[^0-9]/g, '')}
                   </div>
-                  <div className="cc-stream-quote">
-                    "{item.text}"
-                  </div>
-                  <div className="cc-stream-footer">
-                    <span style={{ color: 'var(--ink-secondary)' }}>Intent:</span>
-                    <span style={{ color: 'var(--accent-primary)', fontWeight: 700 }}>{item.intent}</span>
-                    <span style={{ marginLeft: 'auto', color: 'var(--ink-secondary)' }}>Route:</span>
-                    {(item.agents || []).map(a => (
-                      <span key={a} className="tag-metric tag-indigo">{a}</span>
-                    ))}
+                  <div className="cc-event-bubble">
+                    <div className="cc-event-heading">
+                      <span>{item.agent_label}</span>
+                      <span className="cc-stream-ts">
+                        {new Date(item.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </div>
+                    <div className="cc-event-headline">{item.headline}</div>
+                    {item.detail && <div className="cc-event-detail">{item.detail}</div>}
+                    <button
+                      className="cc-event-jump"
+                      onClick={() => { setHitlTab(item.ref_type); openHitl() }}
+                    >
+                      View {labelize(item.ref_type).replace(/s$/, '')} →
+                    </button>
                   </div>
                 </div>
               ))}
