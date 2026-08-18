@@ -296,6 +296,17 @@ def get_customer_call_prep(customer_id: str, conversation_id: str | None = None)
     return brief.model_dump(mode="json")
 
 
+# ── Vouchers (raw MongoDB browser) ──────────────────────────────────────────
+
+@app.get("/api/customers/{customer_id}/vouchers")
+def list_customer_vouchers(customer_id: str, category: str = "all"):
+    from ca import customer360
+    customer = customer360.get_customer(customer_id)
+    vs = customer360.fetch_vouchers(customer.ledger_name)
+    docs = vs.vouchers if category == "all" else vs.by_category(category)
+    return [customer360._voucher_summary(v, vs.ledger_name) for v in docs]
+
+
 # ── Label ─────────────────────────────────────────────────────────────────────
 
 class LabelReq(BaseModel):

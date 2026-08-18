@@ -681,6 +681,8 @@ export default function App() {
   const [callPrepLoading, setCallPrepLoading] = useState(false)
   const [showCallPrepModal, setShowCallPrepModal] = useState(false)
 
+  const [showVoucherModal, setShowVoucherModal] = useState(false)
+
   const [leftTab,   setLeftTab]   = useState('threads') // 'threads' | 'approvals' | 'disputes' | 'promises'
   const [approvals, setApprovals] = useState([])
   const [disputes,  setDisputes]  = useState([])
@@ -932,6 +934,10 @@ export default function App() {
             ))}
           </div>
         )}
+
+        <button className="new-btn" onClick={() => setShowVoucherModal(true)}>
+          🗂️ View Vouchers (MongoDB)
+        </button>
       </aside>
 
       {/* ── CENTER ── */}
@@ -1031,6 +1037,85 @@ export default function App() {
         />
       )}
 
+      {showVoucherModal && (
+        <VoucherModal customers={customers} onClose={() => setShowVoucherModal(false)} />
+      )}
+
+    </div>
+  )
+}
+
+// ── Voucher browser modal ────────────────────────────────────────────────────
+
+const VOUCHER_CATS = ['all', 'Sales', 'Receipt', 'Credit Note']
+
+function VoucherModal({ customers, onClose }) {
+  const [custId, setCustId] = useState('')
+  const [category, setCategory] = useState('all')
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (!custId) { setRows([]); return }
+    setLoading(true)
+    api.get(`/api/customers/${custId}/vouchers?category=${encodeURIComponent(category)}`)
+      .then(setRows)
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false))
+  }, [custId, category])
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-content voucher-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title-row">
+            <span style={{ fontSize: '22px' }}>🗂️</span>
+            <div className="modal-title">Voucher Browser · MongoDB</div>
+          </div>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="modal-body">
+          <div className="voucher-toolbar">
+            <div style={{ width: '320px' }}>
+              <CustomerPicker customers={customers} value={custId} onChange={setCustId} />
+            </div>
+            <div className="script-tabs">
+              {VOUCHER_CATS.map(c => (
+                <button key={c} className={`script-tab-btn${category === c ? ' active' : ''}`}
+                  onClick={() => setCategory(c)}>
+                  {c === 'all' ? 'All' : c === 'Receipt' ? 'Receipts' : c}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {!custId && <div className="no-thread">← Select a customer to see its vouchers</div>}
+          {custId && loading && <div className="thinking">Loading vouchers…</div>}
+          {custId && !loading && rows.length === 0 && <div className="empty-list">No vouchers for this filter</div>}
+          {custId && !loading && rows.length > 0 && (
+            <div className="voucher-table-wrap">
+              <table className="voucher-table">
+                <thead>
+                  <tr><th>Date</th><th>Voucher #</th><th>Type</th><th>Category</th><th>Amount</th><th>Items</th></tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i}>
+                      <td>{r.date}</td>
+                      <td>{r.voucher_number}</td>
+                      <td>{r.voucher_type}</td>
+                      <td>{r.category}</td>
+                      <td>{inr(r.amount)}</td>
+                      <td>{(r.items || []).map(it => it.name).filter(Boolean).join(', ')}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

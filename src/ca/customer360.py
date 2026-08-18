@@ -410,6 +410,7 @@ def _voucher_summary(v: dict[str, Any], ledger_name: str) -> dict[str, Any]:
         "voucher_number": v.get("voucherNumber"),
         "date": _vdate(v),
         "voucher_type": v.get("voucherTypeName"),
+        "category": v.get("voucherCategory"),
         "amount": round(abs(party_amount(v, ledger_name)), 2),
         "items": [
             {

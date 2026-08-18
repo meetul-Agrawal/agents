@@ -341,6 +341,49 @@ body { font-family: system-ui, -apple-system, sans-serif; height: 100vh; overflo
   font-weight: 600;
   cursor: pointer;
 }
+.voucher-modal {
+  max-width: 95vw;
+  width: 95vw;
+  height: 90vh;
+  max-height: 90vh;
+}
+.voucher-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.voucher-table-wrap {
+  flex: 1;
+  overflow: auto;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+}
+.voucher-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.voucher-table th {
+  position: sticky;
+  top: 0;
+  text-align: left;
+  background: var(--page-bg);
+  color: var(--text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.voucher-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-light);
+  color: var(--text);
+  white-space: nowrap;
+}
+.voucher-table tbody tr:hover {
+  background: #fff9c4;
+}
 .script-tab-btn.active {
   background: var(--accent);
   color: var(--accent-fg);
