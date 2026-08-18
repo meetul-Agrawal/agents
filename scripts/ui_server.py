@@ -309,11 +309,14 @@ def _labelize(key: str) -> str:
 
 
 def _evidence_line(evidence: list[dict]) -> str | None:
-    """First evidence entry, rendered as the concrete fact behind a dispute —
-    invoice/receipt number, amount, date, item — instead of just its title."""
-    if not evidence:
-        return None
-    e = evidence[0]
+    """Every evidence entry, rendered as the concrete fact behind a dispute —
+    invoice/receipt number, amount, date, item — instead of just its title.
+    Most cases cite one voucher; multi-voucher cases get one clause each."""
+    lines = [line for line in (_one_evidence_line(e) for e in evidence) if line]
+    return "; ".join(lines) or None
+
+
+def _one_evidence_line(e: dict) -> str | None:
     kind = e.get("type")
     if kind == "invoice_on_record":
         items = ", ".join(e.get("matched_items") or e.get("items") or [])
