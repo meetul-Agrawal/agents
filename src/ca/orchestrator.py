@@ -80,6 +80,7 @@ AGENT_ORDER = [
     "sa6_return",
     "sa5_order",
     "sa4_approval",
+    "sa9_verifier",
     "sa7_health",
     "sa8_call_prep",
 ]
@@ -609,7 +610,14 @@ def default_classifier() -> Classifier:
 
 def create_plan(intents: Iterable[Intent], entities: dict[str, Any]) -> ExecutionPlan:
     """One task per agent, ordered by AGENT_ORDER. Two intents owned by the same
-    agent become one task — an agent should be asked once, with everything."""
+    agent become one task — an agent should be asked once, with everything.
+
+    `sa9_verifier` owns no intent (no entry in `INTENT_AGENT`), so it never
+    matches `by_agent` in the loop below — it is scheduled as SA-4's
+    dependent instead, appended only when SA-4 itself got a task, wired via
+    `depends_on` to that task. `execute()` is what actually hands it SA-4's
+    result (see its docstring); this only decides whether it runs at all.
+    """
     by_agent: dict[str, list[Intent]] = {}
     for intent in intents:
         agent = intent.entities.get("agent")
@@ -618,6 +626,7 @@ def create_plan(intents: Iterable[Intent], entities: dict[str, Any]) -> Executio
 
     tasks: list[AgentTask] = []
     previous: str | None = None
+    approval_task_id: str | None = None
     for agent in AGENT_ORDER:
         if agent not in by_agent:
             continue
@@ -633,7 +642,18 @@ def create_plan(intents: Iterable[Intent], entities: dict[str, Any]) -> Executio
             inputs={"intents": [i.name for i in agent_intents], "entities": entities},
         )
         tasks.append(task)
+        if agent == "sa4_approval":
+            approval_task_id = task.agent_task_id
         previous = task.agent_task_id
+
+    if approval_task_id:
+        tasks.append(AgentTask(
+            agent="sa9_verifier",
+            action="verify_approval",
+            reason="self-check the approval draft against the customer's ask before a human sees it",
+            priority=2,
+            depends_on=[approval_task_id],
+        ))
     return ExecutionPlan(tasks=tasks)
 
 
@@ -671,13 +691,14 @@ def mock_agent(task: AgentTask, state: CustomerAssistState) -> AgentResult:
 
 
 # Real agents replace entries here as each phase lands.
-from . import sa1_general, sa2_recovery, sa3_dispute, sa4_approval
+from . import sa1_general, sa2_recovery, sa3_dispute, sa4_approval, sa9_verifier
 
 AGENT_RUNNERS: dict[str, AgentRunner] = {name: mock_agent for name in AGENT_NAMES}
 AGENT_RUNNERS["sa1_general"] = sa1_general.run
 AGENT_RUNNERS["sa2_recovery"] = sa2_recovery.run
 AGENT_RUNNERS["sa3_dispute"] = sa3_dispute.run
 AGENT_RUNNERS["sa4_approval"] = sa4_approval.run
+AGENT_RUNNERS["sa9_verifier"] = sa9_verifier.run
 
 
 def run_agent(
@@ -801,8 +822,12 @@ def _conversation_context(conversation_id: str | None) -> dict[str, Any]:
     """Load entities from prior messages in this conversation so follow-up
     messages can resolve anaphoric references like 'that invoice'.
 
-    Only voucher_numbers are carried forward — amounts and quantities are too
-    context-dependent to inherit safely.
+    voucher_numbers, and (for an open dispute) the item/issue/about_balance
+    slots SA-3 asks for, are carried forward — amounts and quantities are too
+    context-dependent to inherit safely. Each dispute slot is re-classified
+    fresh per turn (`entities_from`); this only fills in what THIS turn's
+    message didn't mention, so "INV/2024/001" sent after "issue in aata,
+    damaged" doesn't lose the item/issue SA-3 already has.
     """
     if not conversation_id:
         return {}
@@ -815,6 +840,9 @@ def _conversation_context(conversation_id: str | None) -> dict[str, Any]:
 
     ctx: dict[str, Any] = {}
     prior_vouchers: list[str] = []
+    prior_item: str | None = None
+    prior_issue: str | None = None
+    prior_about_balance: bool | None = None
     for msg in prior_msgs:
         # Check stored classification metadata for prior entities.
         meta = (msg.metadata or {}).get("classification", {})
@@ -823,9 +851,21 @@ def _conversation_context(conversation_id: str | None) -> dict[str, Any]:
         # Also run regex on prior inbound message text as fallback.
         if msg.direction == "inbound" and msg.text:
             prior_vouchers.extend(ENTITY_PATTERNS["voucher_numbers"].findall(msg.text))
+        if entities.get("dispute_item"):
+            prior_item = entities["dispute_item"]
+        if entities.get("dispute_issue"):
+            prior_issue = entities["dispute_issue"]
+        if "dispute_about_balance" in entities:
+            prior_about_balance = entities["dispute_about_balance"]
 
     if prior_vouchers:
         ctx["prior_voucher_numbers"] = sorted(set(prior_vouchers))
+    if prior_item:
+        ctx["prior_dispute_item"] = prior_item
+    if prior_issue:
+        ctx["prior_dispute_issue"] = prior_issue
+    if prior_about_balance:
+        ctx["prior_dispute_about_balance"] = prior_about_balance
     return ctx
 
 
@@ -849,12 +889,23 @@ def classify_intent(
     if understanding is not None:
         entities.update(entities_from(understanding, state.message))
 
-    # Carry forward voucher numbers from prior messages in this conversation
-    # if no voucher was extracted in the current turn.
-    if not entities.get("voucher_numbers"):
+    # Carry forward voucher numbers, and (mid-dispute) the item/issue/balance
+    # slots, from prior turns of this conversation — whatever THIS turn's
+    # message didn't itself supply. Only fetched when there's something to
+    # gain: no voucher this turn, or an open dispute where a later turn's
+    # slots can fill gaps an earlier turn left (see `_conversation_context`).
+    is_dispute_turn = any(i.name == "dispute" for i in intents)
+    if not entities.get("voucher_numbers") or is_dispute_turn:
         conv_ctx = _conversation_context(state.conversation_id)
-        if conv_ctx.get("prior_voucher_numbers"):
+        if not entities.get("voucher_numbers") and conv_ctx.get("prior_voucher_numbers"):
             entities["voucher_numbers"] = conv_ctx["prior_voucher_numbers"]
+        if is_dispute_turn:
+            if not entities.get("dispute_item") and conv_ctx.get("prior_dispute_item"):
+                entities["dispute_item"] = conv_ctx["prior_dispute_item"]
+            if not entities.get("dispute_issue") and conv_ctx.get("prior_dispute_issue"):
+                entities["dispute_issue"] = conv_ctx["prior_dispute_issue"]
+            if "dispute_about_balance" not in entities and conv_ctx.get("prior_dispute_about_balance"):
+                entities["dispute_about_balance"] = conv_ctx["prior_dispute_about_balance"]
 
     urgency = "high" if any(
         i.name in {"dispute", "settlement_request", "credit_note_request"} for i in intents
@@ -879,11 +930,21 @@ def execute(state: CustomerAssistState, config: RunnableConfig = None) -> dict[s
     timeout = config.get("timeout", AGENT_TIMEOUT_SECONDS)
 
     results: list[AgentResult] = []
+    results_by_task_id: dict[str, AgentResult] = {}
     pending: list[ProposedAction] = []
     completed: list[ProposedAction] = []
 
     for task in (state.execution_plan.tasks if state.execution_plan else []):
+        # A task with `depends_on` (currently only sa9_verifier, on its sa4_approval
+        # task) gets that dependency's own AgentResult handed to it — the one thing
+        # a task like sa9_verifier needs that its own tool reads can't give back
+        # (see sa9_verifier.py). Single dependency only: nothing here has more than one.
+        if task.depends_on:
+            dep_result = next((results_by_task_id[d] for d in task.depends_on if d in results_by_task_id), None)
+            if dep_result is not None:
+                task = task.model_copy(update={"inputs": {**task.inputs, "dependency_result": dep_result}})
         result = run_agent(task, state, runners=runners, timeout=timeout)
+        results_by_task_id[task.agent_task_id] = result
 
         if task.requires_human:
             # `requires_human` means the topic this task is working on needs a

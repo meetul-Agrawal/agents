@@ -87,6 +87,7 @@ AgentName = Literal[
     "sa6_return",
     "sa7_health",
     "sa8_call_prep",
+    "sa9_verifier",
 ]
 AGENT_NAMES: frozenset[str] = frozenset(AgentName.__args__)
 
@@ -547,6 +548,7 @@ class Approval(Contract):
     amount: float | None = None
     context: dict[str, Any] = Field(default_factory=dict)
     recommendation: str = ""
+    summary: str = ""
     decided_by: str | None = None
     decided_at: datetime | None = None
     created_at: datetime = Field(default_factory=utcnow)

@@ -32,6 +32,7 @@ WRITE_TOOLS = [
     ToolSpec(name="update_dispute", purpose="Update a dispute case", access="write", mode="auto"),
     ToolSpec(name="create_approval", purpose="Raise an approval request", access="write", mode="auto"),
     ToolSpec(name="update_approval", purpose="Record an approval decision", access="write", mode="human_approval"),
+    ToolSpec(name="update_approval_draft", purpose="Redraft an approval's summary/context after a self-check", access="write", mode="auto"),
     ToolSpec(name="create_payment_promise", purpose="Record a payment promise", access="write", mode="auto"),
     ToolSpec(name="create_event", purpose="Append to the event store", access="write", mode="auto"),
     ToolSpec(name="create_task", purpose="Create a follow-up task", access="write", mode="auto"),
@@ -92,6 +93,15 @@ AGENTS: dict[str, AgentSpec] = {
             readable_state=["customer_context", "active_approvals", "active_cases"],
             writable_state=["agent_results", "pending_actions"],
             escalation_rules=["never execute an approved-only action without an approval record"],
+        ),
+        AgentSpec(
+            name="sa9_verifier",
+            purpose="Self-check SA-4's drafted approval against what the customer asked for, "
+                    "redraft on a miss, before a human ever sees it",
+            tools=_ALL_READ + ["update_approval_draft"],
+            readable_state=["customer_context", "active_approvals"],
+            writable_state=["agent_results"],
+            escalation_rules=["still unverified after max attempts -> leave flagged for the human reviewer"],
         ),
         AgentSpec(
             name="sa5_order",

@@ -142,7 +142,10 @@ def test_plan_orders_reads_before_actions_and_approval_last():
         ],
         {},
     )
-    assert [t.agent for t in plan.tasks] == ["sa1_general", "sa6_return", "sa4_approval"]
+    # sa9_verifier trails sa4_approval automatically: it owns no intent of its
+    # own, it is scheduled as sa4_approval's dependent whenever that task
+    # exists (see orchestrator.create_plan).
+    assert [t.agent for t in plan.tasks] == ["sa1_general", "sa6_return", "sa4_approval", "sa9_verifier"]
 
 
 def test_two_intents_for_one_agent_become_one_task():

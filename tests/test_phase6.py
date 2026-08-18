@@ -28,6 +28,7 @@ from ca.contracts import (
     Case,
     CustomerAssistState,
     Event,
+    Message,
     ProposedAction,
 )
 
@@ -307,10 +308,11 @@ def approval_recorder(monkeypatch):
 
     def fake_approval(cid, type, requested_by, **kw):
         approvals.append({"type": type, "amount": kw.get("amount"),
-                          "context": kw.get("context"), "recommendation": kw.get("recommendation")})
+                          "context": kw.get("context"), "recommendation": kw.get("recommendation"),
+                          "summary": kw.get("summary")})
         return Approval(customer_id=cid, type=type, requested_by=requested_by,
                         amount=kw.get("amount"), context=kw.get("context") or {},
-                        recommendation=kw.get("recommendation", "")), True
+                        recommendation=kw.get("recommendation", ""), summary=kw.get("summary", "")), True
 
     def fake_event(cid, type, source, **kw):
         events.append((type, kw.get("payload") or {}))
@@ -387,6 +389,138 @@ def test_irrelevant_intent_is_ignored_by_sa4():
     result = sa4.run(_task("sa4_approval", "outstanding_enquiry"), _state("how much do I owe?"))
     assert result.status == "needs_information"
     assert result.customer_message is None
+
+
+# --------------------------------------------------------------------------
+# SA-4 — draft summary
+# --------------------------------------------------------------------------
+
+
+def test_approval_carries_a_summary(approval_recorder, monkeypatch):
+    monkeypatch.setattr(c3, "get_outstanding", lambda cid: None)
+    monkeypatch.setattr(c3, "get_payment_history", lambda cid: None)
+    monkeypatch.setattr(c3, "get_approvals", lambda cid: [])
+    sa4.run(_task("sa4_approval", "settlement_request", entities={"amounts": [50000.0]}),
+            _state("Please settle for 50,000."))
+    approvals, _ = approval_recorder
+    assert approvals[0]["summary"]
+
+
+# --------------------------------------------------------------------------
+# SA-9 — the independent verifier agent: self-check + retry (max 3),
+# never blocks the human gate SA-4 already opened.
+# --------------------------------------------------------------------------
+
+from ca import sa9_verifier as sa9  # noqa: E402
+
+
+def _approval_result(approval_id: str = "APR-TEST") -> AgentResult:
+    return AgentResult(
+        agent="sa4_approval", status="needs_approval",
+        actions=[ProposedAction(type="create_approval", mode="auto", executed=True,
+                                payload={"approval_id": approval_id, "type": "settlement"})],
+    )
+
+
+def _verify_task(dependency_result: AgentResult | None) -> AgentTask:
+    return AgentTask(agent="sa9_verifier", action="verify_approval",
+                     inputs={"dependency_result": dependency_result} if dependency_result else {})
+
+
+def test_sa9_no_dependency_result_is_a_no_op():
+    result = sa9.run(_verify_task(None), _state("irrelevant"))
+    assert result.status == "completed"
+    assert result.actions == []
+
+
+def test_sa9_skips_when_sa4_did_not_actually_raise_anything():
+    """SA-4 ran but the intent wasn't relevant (`needs_information`, no
+    approval raised) — nothing for SA-9 to check."""
+    dep = AgentResult(agent="sa4_approval", status="needs_information")
+    result = sa9.run(_verify_task(dep), _state("irrelevant"))
+    assert result.status == "completed"
+    assert result.actions == []
+
+
+def test_no_provider_verifies_trivially_and_costs_no_retry(monkeypatch):
+    """CA_PHRASE=off (the test-suite default, see conftest) — `_verify` must
+    not spend retries guessing against a model that isn't there."""
+    monkeypatch.setattr(c3, "get_approvals", lambda cid: [
+        {"approval_id": "APR-TEST", "type": "settlement", "amount": 50000.0, "summary": "draft", "context": {}},
+    ])
+    updates = []
+    monkeypatch.setattr(services, "update_approval_draft",
+                        lambda approval_id, **kw: updates.append((approval_id, kw)))
+    calls = {"n": 0}
+
+    def counting_verify(message, approval_type, amount, summary):
+        calls["n"] += 1
+        return True, ""
+
+    monkeypatch.setattr(sa4, "_verify", counting_verify)
+    result = sa9.run(_verify_task(_approval_result()), _state("Please settle this."))
+    assert calls["n"] == 1
+    assert result.status == "completed"
+    assert updates[0][1]["context"]["verified"] is True
+
+
+def test_failing_verify_retries_up_to_three_times_then_still_flags_it(monkeypatch):
+    monkeypatch.setattr(c3, "get_approvals", lambda cid: [
+        {"approval_id": "APR-TEST", "type": "settlement", "amount": 50000.0, "summary": "draft", "context": {}},
+    ])
+    updates = []
+    monkeypatch.setattr(services, "update_approval_draft",
+                        lambda approval_id, **kw: updates.append((approval_id, kw)))
+    calls = {"n": 0}
+
+    def always_fails(message, approval_type, amount, summary):
+        calls["n"] += 1
+        return False, f"attempt {calls['n']} wrong"
+
+    monkeypatch.setattr(sa4, "_verify", always_fails)
+    result = sa9.run(_verify_task(_approval_result()), _state("Please settle this."))
+    assert calls["n"] == sa4.MAX_VERIFY_ATTEMPTS
+    # unverified is never a block: SA-9 always reaches `completed`, the approval
+    # itself was already `pending` for a human the moment SA-4 raised it.
+    assert result.status == "completed"
+    context = updates[0][1]["context"]
+    assert context["verified"] is False
+    assert "attempt 3" in context["verify_feedback"]
+
+
+def test_verify_that_passes_on_retry_stops_early(monkeypatch):
+    monkeypatch.setattr(c3, "get_approvals", lambda cid: [
+        {"approval_id": "APR-TEST", "type": "settlement", "amount": 50000.0, "summary": "draft", "context": {}},
+    ])
+    updates = []
+    monkeypatch.setattr(services, "update_approval_draft",
+                        lambda approval_id, **kw: updates.append((approval_id, kw)))
+    calls = {"n": 0}
+
+    def fails_once(message, approval_type, amount, summary):
+        calls["n"] += 1
+        if calls["n"] >= 2:
+            return True, ""
+        return False, "not specific enough"
+
+    monkeypatch.setattr(sa4, "_verify", fails_once)
+    sa9.run(_verify_task(_approval_result()), _state("Please settle this."))
+    assert calls["n"] == 2
+    context = updates[0][1]["context"]
+    assert context["verified"] is True
+    assert "verify_feedback" not in context
+
+
+def test_sa9_only_calls_tools_it_is_permitted(monkeypatch):
+    from ca.registry import get_agent
+
+    monkeypatch.setattr(c3, "get_approvals", lambda cid: [
+        {"approval_id": "APR-TEST", "type": "settlement", "amount": 50000.0, "summary": "draft", "context": {}},
+    ])
+    monkeypatch.setattr(services, "update_approval_draft", lambda approval_id, **kw: None)
+    result = sa9.run(_verify_task(_approval_result()), _state("Please settle this."))
+    allowed = set(get_agent("sa9_verifier").tools)
+    assert all(call.tool in allowed for call in result.tool_calls)
 
 
 # --------------------------------------------------------------------------
@@ -505,10 +639,69 @@ def test_dispute_and_settlement_in_one_message_routes_to_both_agents(monkeypatch
     state = orc.handle("Your invoice is incorrect and I need a credit note for the difference.",
                        customer_id=CID, message_id="MSG-DA")
     summary = orc.summarize(state)
-    assert set(summary["agents"]) == {"sa3_dispute", "sa4_approval"}
+    # sa9_verifier is scheduled as sa4_approval's dependent whenever an
+    # approval-triggering intent fires — not by owning an intent of its own.
+    assert set(summary["agents"]) == {"sa3_dispute", "sa4_approval", "sa9_verifier"}
     assert summary["requires_human"] is True
     # both agents' own grounded replies appear; no duplicate boilerplate on top
     assert state.final_response.count("internal approval") == 0 or "logged your request" in state.final_response
+
+
+# --------------------------------------------------------------------------
+# Cross-turn dispute slots — item/issue named turn 1, invoice given turn 2
+# --------------------------------------------------------------------------
+
+
+def _prior_message(text: str, entities: dict) -> Message:
+    return Message(
+        conversation_id="CNV-TEST", channel="chat", direction="inbound", text=text,
+        metadata={"classification": {"entities": entities}},
+    )
+
+
+def test_conversation_context_carries_dispute_slots_forward(monkeypatch):
+    from ca import inbox
+
+    monkeypatch.setattr(inbox, "conversation_messages", lambda cid, **kw: [
+        _prior_message("issue in aata, damaged", {
+            "dispute_item": "Aata 10kg", "dispute_issue": "damaged", "dispute_about_balance": False,
+        }),
+    ])
+    ctx = orc._conversation_context("CNV-TEST")
+    assert ctx["prior_dispute_item"] == "Aata 10kg"
+    assert ctx["prior_dispute_issue"] == "damaged"
+
+
+def test_classify_intent_fills_dispute_item_from_prior_turn(monkeypatch):
+    """Turn 1: item + issue named, no invoice. Turn 2: invoice number only.
+    Before this change, turn 2's entities would drop the item/issue from turn
+    1 entirely — only voucher_numbers were carried forward — so SA-3 would
+    lose evidence it already had and open a poorer case, or re-ask."""
+    from ca import inbox
+    from ca.contracts import Intent, Request, Understanding
+
+    monkeypatch.setattr(inbox, "conversation_messages", lambda cid, **kw: [
+        _prior_message("issue in aata, damaged", {
+            "dispute_item": "Aata 10kg", "dispute_issue": "damaged", "dispute_about_balance": False,
+        }),
+    ])
+    monkeypatch.setattr(
+        orc, "understand",
+        lambda *a, **kw: Understanding(requests=[
+            Request(intent="dispute", confidence=0.9, clause="INV/2024/001",
+                    voucher_ref="INV/2024/001")
+        ]),
+    )
+    monkeypatch.setattr(
+        orc, "classify_llm",
+        lambda *a, **kw: [Intent(name="dispute", confidence=0.9, entities={"agent": "sa3_dispute"})],
+    )
+    state = CustomerAssistState(channel="chat", message="INV/2024/001", customer_id=CID,
+                                conversation_id="CNV-TEST")
+    out = orc.classify_intent(state)
+    assert out["entities"]["dispute_item"] == "Aata 10kg"
+    assert out["entities"]["dispute_issue"] == "damaged"
+    assert out["entities"]["voucher_numbers"] == ["INV/2024/001"]
 
 
 # --------------------------------------------------------------------------

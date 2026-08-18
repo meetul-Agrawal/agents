@@ -19,10 +19,20 @@ The recommendation attached to the approval is a grounded restatement of
 figures already read from the tools — outstanding, settlement speed, and how
 many approvals this customer has had before — never a verdict on whether to
 approve it.
+
+`_summarize` drafts a one-line summary for the reviewer's list view; `_verify`
+and `MAX_VERIFY_ATTEMPTS` (below) exist here to be reused, not called from
+this module. SA-9 (`sa9_verifier.py`) runs as this agent's dependent — the
+orchestrator schedules it right after this task and hands it this run's own
+`AgentResult` — and does the actual self-check + redraft loop against the
+approval this function just raised. That keeps the split honest: this module
+still only ever raises a `pending` request and never decides; SA-9 only ever
+improves what the human reviewer sees, never gates whether they see it.
 """
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from . import customer360 as c3
@@ -32,6 +42,7 @@ from .contracts import (
     AgentTask,
     Approval,
     CustomerAssistState,
+    ModelOutput,
     ProposedAction,
     ToolCall,
     APPROVAL_TYPES,
@@ -102,6 +113,71 @@ def _recommendation(context: dict[str, Any]) -> str:
     return " ".join(parts)
 
 
+def _summarize(approval_type: str, amount: float | None, feedback: str = "") -> str:
+    """One glance-length sentence for a human reviewer's list view — distinct
+    from `_recommendation`'s multi-fact account context. `feedback` is the
+    prior verify attempt's objection, fed back in so a retry actually
+    addresses it rather than resampling the same mistake."""
+    facts: dict[str, Any] = {"approval_type": approval_type}
+    if amount is not None:
+        facts["amount"] = _inr(amount)
+    if feedback:
+        facts["previous_attempt_was_rejected_because"] = feedback
+    composed = compose_grounded(
+        "Write ONE short sentence summarizing this approval request, for a "
+        "human reviewer glancing at a list of pending requests. State only "
+        "the facts given.",
+        facts,
+    )
+    if composed:
+        return composed
+    amount_text = f" for {_inr(amount)}" if amount is not None else ""
+    return f"{approval_type.replace('_', ' ').title()} request{amount_text}."
+
+
+class _VerifyResult(ModelOutput):
+    ok: bool = True
+    feedback: str = ""
+
+
+_VERIFY_SYSTEM = (
+    "You check a drafted approval request against the customer message it is "
+    "based on. Does the request's type, amount and summary actually reflect "
+    "what the customer asked for? If yes, set ok=true. If something is off — "
+    "wrong type, wrong amount, a summary that misstates the ask — set ok=false "
+    "and say what's wrong in 'feedback' (one short sentence) so it can be "
+    "redrafted. Return only the fields asked for."
+)
+
+MAX_VERIFY_ATTEMPTS = 3
+
+
+def _verify(message: str, approval_type: str, amount: float | None, summary: str) -> tuple[bool, str]:
+    """Self-check: does this request match what the customer actually asked
+    for? Never gates whether a human sees it — `run()` still always raises a
+    `pending` approval either way (see module docstring); this only decides
+    whether the draft gets one more redraft first. No provider configured ->
+    nothing to check against, so don't spend retries guessing: treat as
+    verified and let the human reviewer judge it directly."""
+    import os
+
+    from . import llm
+
+    if os.getenv("CA_PHRASE", "on").lower() == "off" or not llm.available():
+        return True, ""
+    facts: dict[str, Any] = {"customer_message": message, "approval_type": approval_type, "summary": summary}
+    if amount is not None:
+        facts["amount"] = _inr(amount)
+    try:
+        out = llm.complete_structured(
+            _VerifyResult, _VERIFY_SYSTEM, json.dumps(facts, default=str),
+            capability="summarization", example={"ok": True, "feedback": ""},
+        )
+    except llm.LLMUnavailable:
+        return True, ""
+    return out.ok, out.feedback
+
+
 def _amount(entities: dict[str, Any]) -> float | None:
     amounts = entities.get("amounts") or []
     return float(amounts[0]) if amounts else None
@@ -137,10 +213,11 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     context = _gather_context(cid, calls)
     recommendation = _recommendation(context)
     amount = _amount(entities)
+    summary = _summarize(approval_type, amount)
 
     approval, created = services.create_approval(
         cid, approval_type, "sa4_approval", amount=amount, context=context,
-        recommendation=recommendation, conversation_id=state.conversation_id,
+        recommendation=recommendation, summary=summary, conversation_id=state.conversation_id,
         message_id=message_id,
     )
     calls.append(ToolCall(tool="create_approval", arguments={"approval_id": approval.approval_id}))

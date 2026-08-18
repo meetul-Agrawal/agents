@@ -208,6 +208,7 @@ def create_approval(
     amount: float | None = None,
     context: dict[str, Any] | None = None,
     recommendation: str = "",
+    summary: str = "",
     conversation_id: str | None = None,
     message_id: str | None = None,
     db: Any | None = None,
@@ -231,13 +232,38 @@ def create_approval(
     approval = Approval(
         customer_id=customer_id, conversation_id=conversation_id, type=type,
         requested_by=requested_by, amount=amount, context=context or {},
-        recommendation=recommendation,
+        recommendation=recommendation, summary=summary,
     )
     doc = approval.model_dump(mode="json")
     if key:
         doc["_idempotency"] = key
     coll.insert_one(doc)
     return approval, True
+
+
+def update_approval_draft(
+    approval_id: str, *, summary: str | None = None, context: dict[str, Any] | None = None,
+    db: Any | None = None,
+) -> Approval | None:
+    """Patch the draft `summary`/`context` a verifier redrafted. Never touches
+    `status` or `decided_by` — same boundary as `create_approval`: this can
+    only change how the request is *described*, never whether it is approved,
+    so it stays `auto`-mode (registry.py) like raising the request itself."""
+    db = db if db is not None else app_db()
+    coll = db["approvals"]
+    doc = coll.find_one({"approval_id": approval_id})
+    if not doc:
+        return None
+    updates: dict[str, Any] = {}
+    if summary is not None:
+        updates["summary"] = summary
+    if context is not None:
+        updates["context"] = context
+    if not updates:
+        return Approval.model_validate(_clean(doc))
+    approval = Approval.model_validate(_clean(doc)).model_copy(update=updates)
+    coll.replace_one({"approval_id": approval_id}, approval.model_dump(mode="json"))
+    return approval
 
 
 def decide_approval(
