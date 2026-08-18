@@ -367,6 +367,139 @@ def get_outstanding(customer_id: str, *, as_of: date | None = None) -> Outstandi
 
 
 # --------------------------------------------------------------------------
+# Company-wide (dashboard) aggregate
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class PortfolioSnapshot:
+    """Company-wide receivables, same bill-level rule as compute_outstanding:
+    never net a customer's overpayment against another's unpaid bill."""
+
+    total_outstanding: float
+    total_receipted: float
+    debtor_accounts: int
+    open_bill_count: int
+    ageing: dict[str, float]
+    avg_settlement_days: float
+    top_debtors: list[dict[str, Any]]
+
+
+def _as_date(v: Any) -> date | None:
+    if isinstance(v, datetime):
+        return v.date()
+    if isinstance(v, date):
+        return v
+    return None
+
+
+def compute_portfolio_snapshot(*, as_of: date | None = None, top_n: int = 10) -> PortfolioSnapshot:
+    """One pass over `vouchers` for every debtor, instead of running
+    compute_outstanding() per customer (~280ms x 6000+ ledgers — untenable
+    inside a request). Mirrors invoice_totals()/allocations()'s bill matching,
+    just grouped in the aggregation instead of looped in Python.
+    """
+    as_of = as_of or utcnow().date()
+    tdb = tenant_db()
+    debtor_docs = list(tdb["ledgers"].find(_debtor_filter(), {"ledgerName": 1}))
+    debtor_names = [d["ledgerName"] for d in debtor_docs if d.get("ledgerName")]
+    name_to_id = {d["ledgerName"]: str(d["_id"]) for d in debtor_docs if d.get("ledgerName")}
+
+    sales = tdb["vouchers"].aggregate(
+        [
+            {"$match": {**_POSTING, "voucherCategory": "Sales"}},
+            {"$unwind": "$ledgerEntries"},
+            {"$match": {"ledgerEntries.ledgerName": {"$in": debtor_names}}},
+            {
+                "$group": {
+                    "_id": {"ledger": "$ledgerEntries.ledgerName", "num": "$voucherNumber"},
+                    "invoiced": {"$sum": {"$multiply": ["$ledgerEntries.amount", -1]}},
+                    "date": {"$min": "$dates.date"},
+                }
+            },
+        ],
+        allowDiskUse=True,
+    )
+
+    receipts = tdb["vouchers"].aggregate(
+        [
+            {"$match": {**_POSTING, "voucherCategory": "Receipt"}},
+            {"$unwind": "$ledgerEntries"},
+            {"$match": {"ledgerEntries.ledgerName": {"$in": debtor_names}}},
+            {"$group": {"_id": "$ledgerEntries.ledgerName", "receipted": {"$sum": "$ledgerEntries.amount"}}},
+        ],
+        allowDiskUse=True,
+    )
+    total_receipted = round(sum(r["receipted"] for r in receipts), 2)
+
+    allocations_ = tdb["vouchers"].aggregate(
+        [
+            {"$match": {**_POSTING, "voucherCategory": "Receipt"}},
+            {"$unwind": "$ledgerEntries"},
+            {"$match": {"ledgerEntries.ledgerName": {"$in": debtor_names}}},
+            {"$unwind": "$ledgerEntries.billAllocations"},
+            {"$match": {"ledgerEntries.billAllocations.billType": "Agst Ref"}},
+            {
+                "$group": {
+                    "_id": {"ledger": "$ledgerEntries.ledgerName", "num": "$ledgerEntries.billAllocations.name"},
+                    "paid": {"$sum": "$ledgerEntries.billAllocations.amount"},
+                    "last_paid_date": {"$max": "$dates.date"},
+                }
+            },
+        ],
+        allowDiskUse=True,
+    )
+    paid_map = {(a["_id"]["ledger"], a["_id"]["num"]): a for a in allocations_}
+
+    ageing = {b: 0.0 for b in AGEING_BUCKETS}
+    per_customer: dict[str, float] = defaultdict(float)
+    per_customer_bills: dict[str, int] = defaultdict(int)
+    per_customer_bucket: dict[str, dict[str, float]] = defaultdict(lambda: {b: 0.0 for b in AGEING_BUCKETS})
+    settle_days: list[int] = []
+
+    for s in sales:
+        ledger, number = s["_id"]["ledger"], s["_id"]["num"]
+        alloc = paid_map.get((ledger, number))
+        paid = alloc["paid"] if alloc else 0.0
+        invoice_date = _as_date(s["date"])
+
+        if alloc and paid + 0.01 >= s["invoiced"]:
+            paid_date = _as_date(alloc.get("last_paid_date"))
+            if invoice_date and paid_date:
+                settle_days.append((paid_date - invoice_date).days)
+
+        remaining = round(s["invoiced"] - paid, 2)
+        if remaining <= 0.01:
+            continue
+        bucket = _bucket((as_of - invoice_date).days if invoice_date else 0)
+        ageing[bucket] = round(ageing[bucket] + remaining, 2)
+        per_customer[ledger] += remaining
+        per_customer_bills[ledger] += 1
+        per_customer_bucket[ledger][bucket] += remaining
+
+    top_debtors = [
+        {
+            "customer_id": name_to_id.get(name, ""),
+            "customer_name": name,
+            "outstanding": round(amount, 2),
+            "open_bills": per_customer_bills[name],
+            "ageing_bucket": max(per_customer_bucket[name].items(), key=lambda kv: kv[1])[0],
+        }
+        for name, amount in sorted(per_customer.items(), key=lambda kv: -kv[1])[:top_n]
+    ]
+
+    return PortfolioSnapshot(
+        total_outstanding=round(sum(per_customer.values()), 2),
+        total_receipted=total_receipted,
+        debtor_accounts=len(debtor_names),
+        open_bill_count=sum(per_customer_bills.values()),
+        ageing=ageing,
+        avg_settlement_days=round(sum(settle_days) / len(settle_days), 1) if settle_days else 0.0,
+        top_debtors=top_debtors,
+    )
+
+
+# --------------------------------------------------------------------------
 # Ledger, history, behaviour
 # --------------------------------------------------------------------------
 

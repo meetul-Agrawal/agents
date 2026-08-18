@@ -24,6 +24,22 @@ _DIST = pathlib.Path(__file__).parent.parent / "ui" / "dist"
 # *.jsonl under datasets/ as an EvalCase, and a label record is a different shape.
 _REVIEWED = pathlib.Path("evals/reviewed/routing.jsonl")
 
+# compute_portfolio_snapshot() is a ~3s company-wide scan; the dashboard polls
+# every 15s, so cache it instead of re-scanning `vouchers` on every poll.
+_SNAPSHOT_TTL_SECONDS = 300
+_snapshot_cache: dict[str, Any] = {"data": None, "at": 0.0}
+_HITL_AGENTS = {"sa3_dispute", "sa4_approval", "sa6_return"}
+
+
+def _company_snapshot():
+    import time as _time
+    from ca import customer360 as c3
+
+    if _time.time() - _snapshot_cache["at"] > _SNAPSHOT_TTL_SECONDS:
+        _snapshot_cache["data"] = c3.compute_portfolio_snapshot()
+        _snapshot_cache["at"] = _time.time()
+    return _snapshot_cache["data"]
+
 
 @asynccontextmanager
 async def lifespan(app):
@@ -71,9 +87,9 @@ def list_intents():
 
 @app.get("/api/dashboard/summary")
 def get_dashboard_summary():
-    from ca import customer360 as c3
     adb = app_db()
     tdb = tenant_db()
+    snap = _company_snapshot()
 
     # Company Master Info
     comp_doc = tdb["companies"].find_one() or {}
@@ -119,64 +135,23 @@ def get_dashboard_summary():
             "status": (cls_data.get("statuses") or ["completed"])[0],
         })
 
-    # High Exposure Portfolio Debtors
-    sample_cid = "6a6464a19f707bd30403790f"  # Indore, Saibaba Enterprises
-    out_saibaba = c3.get_outstanding(sample_cid)
-    hist_saibaba = c3.get_payment_history(sample_cid)
-
+    # High Exposure Portfolio Debtors — real top-N by company-wide outstanding,
+    # not per-customer detail, so only what compute_portfolio_snapshot() knows.
+    _RISK_BY_BUCKET = {"90+": "critical", "61-90": "high", "31-60": "medium", "0-30": "low"}
     portfolio_debtors = [
         {
-            "customer_id": sample_cid,
-            "customer_name": "Indore, Saibaba Enterprises",
-            "region": "Indore Division",
-            "risk_level": "critical",
-            "outstanding_formatted": f"₹{out_saibaba.outstanding:,.2f}",
-            "open_bills": out_saibaba.open_bill_count,
-            "ageing_bucket": "90+ Days",
-            "notes": "₹10.58 Cr total dues; Active promise of ₹50,000 due 20 Sep",
-            "health_score": 74,
-            "channel": "WhatsApp / Chat",
-        },
-        {
-            "customer_id": "bhopal-sample",
-            "customer_name": "Bhopal Traders & Distributor",
-            "region": "Bhopal Division",
-            "risk_level": "medium",
-            "outstanding_formatted": "₹1,20,000.00",
-            "open_bills": 3,
-            "ageing_bucket": "31-60 Days",
-            "notes": "Prompt payer historically; follow-up needed for August invoice",
-            "health_score": 88,
-            "channel": "WhatsApp",
-        },
-        {
-            "customer_id": "gwalior-sample",
-            "customer_name": "Gwalior Provision Stores",
-            "region": "Gwalior Division",
-            "risk_level": "high",
-            "outstanding_formatted": "₹4,85,200.00",
-            "open_bills": 12,
-            "ageing_bucket": "61-90 Days",
-            "notes": "Shortage dispute open on INV-892; hold new credit limit",
-            "health_score": 62,
-            "channel": "Chat / Email",
-        },
-        {
-            "customer_id": "ujjain-sample",
-            "customer_name": "Ujjain Kirana Stores",
-            "region": "Ujjain Division",
-            "risk_level": "low",
-            "outstanding_formatted": "₹45,600.00",
-            "open_bills": 1,
-            "ageing_bucket": "0-30 Days",
-            "notes": "Special discount request pending approval (APR-1029)",
-            "health_score": 94,
-            "channel": "WhatsApp",
-        },
+            "customer_id": d["customer_id"],
+            "customer_name": d["customer_name"],
+            "risk_level": _RISK_BY_BUCKET.get(d["ageing_bucket"], "medium"),
+            "outstanding_formatted": f"₹{d['outstanding']:,.2f}",
+            "open_bills": d["open_bills"],
+            "ageing_bucket": f"{d['ageing_bucket']} Days",
+        }
+        for d in snap.top_debtors
     ]
 
-    tot_receivables = out_saibaba.outstanding
-    tot_collected = hist_saibaba.total_received if hasattr(hist_saibaba, "total_received") else 419077617.0
+    tot_receivables = snap.total_outstanding
+    tot_collected = snap.total_receipted
 
     # Multi-Agent Fleet Status
     fleet_agents = [
@@ -190,32 +165,34 @@ def get_dashboard_summary():
         {"id": "sa8_call_prep", "name": "SA-8: Executive Call Prep", "role": "AI talking points, call scripts & objection tactics", "status": "active", "runs": agent_counts.get("sa8_call_prep", 4), "mode": "On Demand"},
     ]
 
+    # Resolution rate from the same recent-activity window agent_counts already
+    # covers: fraction of routed runs that didn't need a human-gated SA.
+    total_runs = sum(agent_counts.values())
+    hitl_runs = sum(agent_counts.get(a, 0) for a in _HITL_AGENTS)
+    autonomous_rate = round(100 * (1 - hitl_runs / total_runs), 1) if total_runs else 0.0
+
     return {
         "company_info": {
             "name": company_name,
             "formal_name": comp_doc.get("basicCompantFormalName") or company_name,
-            "total_debtor_accounts": 5000,
-            "total_catalog_items": 5278,
-            "total_vouchers_indexed": 380989,
+            "total_debtor_accounts": snap.debtor_accounts,
+            "total_catalog_items": tdb["stockItems"].count_documents({}),
+            "total_vouchers_indexed": tdb["vouchers"].count_documents({}),
             "active_channels": ["WhatsApp", "Chat", "Email", "Phone Desk"],
         },
         "metrics": {
             "total_receivables_formatted": f"₹{tot_receivables:,.2f}",
-            "open_invoices_count": out_saibaba.open_bill_count,
+            "open_invoices_count": snap.open_bill_count,
             "historical_collected_formatted": f"₹{tot_collected:,.2f}",
-            "avg_settlement_days": int(hist_saibaba.avg_days_to_settle or 16) if hasattr(hist_saibaba, "avg_days_to_settle") else 16,
-            "autonomous_resolution_rate": 88.4,
+            "avg_settlement_days": snap.avg_settlement_days,
+            "autonomous_resolution_rate": autonomous_rate,
             "hitl_pending_total": approvals_cnt + disputes_cnt + promises_cnt,
             "approvals_pending": approvals_cnt,
             "disputes_open": disputes_cnt,
             "promises_active": promises_cnt,
         },
-        "ageing_distribution": {
-            "0-30": "₹45,600.00",
-            "31-60": "₹1,20,000.00",
-            "61-90": "₹4,85,200.00",
-            "90+": f"₹{tot_receivables:,.2f}",
-        },
+        "ageing_distribution": {b: f"₹{amt:,.2f}" for b, amt in snap.ageing.items()},
+        "ageing_distribution_raw": snap.ageing,
         "fleet_agents": fleet_agents,
         "agent_workload": agent_counts,
         "activity_stream": activity_stream,

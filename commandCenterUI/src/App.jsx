@@ -152,7 +152,7 @@ export default function App() {
             </div>
             <div className="cc-hero-number">{metrics.historical_collected_formatted || '₹0.00'}</div>
             <div className="cc-hero-footnote">
-              <span className="tag-metric tag-emerald">380K VOUCHERS</span>
+              <span className="tag-metric tag-emerald">{(company.total_vouchers_indexed || 0).toLocaleString()} VOUCHERS</span>
               <span>Reconciled in ERP database</span>
             </div>
           </div>
@@ -236,28 +236,16 @@ export default function App() {
               {debtors.map(c => (
                 <div key={c.customer_id} className={`cc-debtor-row risk-${c.risk_level}`}>
                   <div className="cc-debtor-top">
-                    <div>
-                      <div className="cc-debtor-name">{c.customer_name}</div>
-                      <div style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--ink-secondary)', marginTop: '2px' }}>
-                        {c.region} · {c.channel}
-                      </div>
-                    </div>
+                    <div className="cc-debtor-name">{c.customer_name}</div>
                     <div className="cc-debtor-sum">{c.outstanding_formatted}</div>
                   </div>
                   <div className="cc-debtor-meta">
                     <div><strong>Aging Status:</strong> {c.ageing_bucket} ({c.open_bills} open invoices)</div>
-                    <div style={{ color: 'var(--ink-secondary)', marginTop: '3px' }}>{c.notes}</div>
                   </div>
                   <div className="cc-debtor-controls">
                     <button className="btn-call-prep-trigger" onClick={() => openCallPrep(c)}>
                       [CALL PREP BRIEF]
                     </button>
-                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', fontFamily: 'var(--font-mono)' }}>
-                      <span style={{ color: 'var(--ink-secondary)' }}>Health Index:</span>
-                      <span style={{ fontWeight: 700, color: c.health_score > 70 ? 'var(--telemetry-emerald)' : 'var(--telemetry-amber)' }}>
-                        {c.health_score}/100
-                      </span>
-                    </div>
                   </div>
                 </div>
               ))}
@@ -317,42 +305,33 @@ export default function App() {
                 <span>Company Receivables Profile</span>
               </div>
               <span style={{ fontSize: '11px', fontFamily: 'var(--font-mono)', color: 'var(--ink-secondary)' }}>
-                5,000+ Ledgers
+                {company.total_debtor_accounts || 0} Ledgers
               </span>
             </div>
             <div className="cc-panel-scroll" style={{ padding: '20px 24px' }}>
               <div className="ageing-metric-stack">
-                <div className="ageing-metric-row">
-                  <div className="ageing-metric-header">
-                    <span>0 - 30 DAYS [CURRENT TERMS]</span>
-                    <span style={{ color: 'var(--telemetry-emerald)' }}>₹45,600.00</span>
-                  </div>
-                  <div className="ageing-meter-track"><div className="ageing-meter-fill fill-emerald" style={{ width: '5%' }}></div></div>
-                </div>
-
-                <div className="ageing-metric-row">
-                  <div className="ageing-metric-header">
-                    <span>31 - 60 DAYS [NORMAL BACKLOG]</span>
-                    <span style={{ color: 'var(--telemetry-cyan)' }}>₹1,20,000.00</span>
-                  </div>
-                  <div className="ageing-meter-track"><div className="ageing-meter-fill fill-cyan" style={{ width: '10%' }}></div></div>
-                </div>
-
-                <div className="ageing-metric-row">
-                  <div className="ageing-metric-header">
-                    <span>61 - 90 DAYS [ACTIVE FOLLOW-UP]</span>
-                    <span style={{ color: 'var(--telemetry-amber)' }}>₹4,85,200.00</span>
-                  </div>
-                  <div className="ageing-meter-track"><div className="ageing-meter-fill fill-amber" style={{ width: '18%' }}></div></div>
-                </div>
-
-                <div className="ageing-metric-row">
-                  <div className="ageing-metric-header">
-                    <span>90+ DAYS [CRITICAL CONCENTRATION]</span>
-                    <span style={{ color: 'var(--telemetry-rose)' }}>{metrics.total_receivables_formatted || '₹10.58 Cr'}</span>
-                  </div>
-                  <div className="ageing-meter-track"><div className="ageing-meter-fill fill-rose" style={{ width: '100%' }}></div></div>
-                </div>
+                {(() => {
+                  const raw = data?.ageing_distribution_raw || {}
+                  const fmt = data?.ageing_distribution || {}
+                  const total = Object.values(raw).reduce((a, b) => a + b, 0) || 1
+                  const buckets = [
+                    ['0-30', '0 - 30 DAYS [CURRENT TERMS]', 'emerald'],
+                    ['31-60', '31 - 60 DAYS [NORMAL BACKLOG]', 'cyan'],
+                    ['61-90', '61 - 90 DAYS [ACTIVE FOLLOW-UP]', 'amber'],
+                    ['90+', '90+ DAYS [CRITICAL CONCENTRATION]', 'rose'],
+                  ]
+                  return buckets.map(([key, label, color]) => (
+                    <div className="ageing-metric-row" key={key}>
+                      <div className="ageing-metric-header">
+                        <span>{label}</span>
+                        <span style={{ color: `var(--telemetry-${color})` }}>{fmt[key] || '₹0.00'}</span>
+                      </div>
+                      <div className="ageing-meter-track">
+                        <div className={`ageing-meter-fill fill-${color}`} style={{ width: `${Math.max(Math.round(((raw[key] || 0) / total) * 100), 1)}%` }}></div>
+                      </div>
+                    </div>
+                  ))
+                })()}
               </div>
             </div>
           </div>
