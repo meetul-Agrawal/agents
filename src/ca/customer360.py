@@ -432,6 +432,40 @@ def get_sales_history(customer_id: str, *, limit: int | None = None) -> list[dic
     return rows[:limit] if limit else rows
 
 
+_QTY_LEAD = re.compile(r"^\s*([\d,]+(?:\.\d+)?)\s*([A-Za-z]+)")
+
+
+def top_purchased_items(customer_id: str, *, limit: int = 5) -> list[dict[str, Any]]:
+    """Items ranked by total quantity bought, summed across every sales voucher
+    on record — not just the most recent few. Quantity is the leading number in
+    `billedQty` (e.g. "450.00 Pcs = 4500.000 Kg" -> 450.00 Pcs), the only
+    numeric qty field this book exports.
+    """
+    customer = get_customer(customer_id)
+    vs = fetch_vouchers(customer.ledger_name)
+    agg: dict[str, dict[str, Any]] = {}
+    for v in vs.sales:
+        for item in v.get("inventoryEntries") or []:
+            name = (item.get("stockItemName") or "").strip()
+            if not name:
+                continue
+            m = _QTY_LEAD.match(str(item.get("billedQty") or ""))
+            qty = float(m.group(1).replace(",", "")) if m else 0.0
+            row = agg.setdefault(
+                name, {"item": name, "total_qty": 0.0, "unit": m.group(2) if m else "",
+                       "order_count": 0, "total_amount": 0.0},
+            )
+            row["total_qty"] += qty
+            row["order_count"] += 1
+            row["total_amount"] += float(item.get("amount") or 0)
+
+    rows = sorted(agg.values(), key=lambda r: r["total_qty"], reverse=True)
+    for r in rows:
+        r["total_qty"] = round(r["total_qty"], 2)
+        r["total_amount"] = round(r["total_amount"], 2)
+    return rows[:limit]
+
+
 SALES_HISTORY_SYSTEM_PROMPT = (
     "You parse customer enquiries about their sales and purchase history for a "
     "B2B receivables and sales desk.\n\n"

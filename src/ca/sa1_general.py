@@ -48,6 +48,10 @@ def _inr(amount: float) -> str:
     return f"₹{amount:,.2f}"
 
 
+def _qty(n: float) -> str:
+    return f"{n:,.0f}" if float(n).is_integer() else f"{n:,.2f}"
+
+
 def _format_rate(rate_val: Any) -> str:
     if rate_val is None:
         return ""
@@ -222,6 +226,9 @@ _SIZE = re.compile(
     re.I,
 )
 
+# "what did I order the most" names no product — it asks the aggregate itself.
+_TOP_ITEM = re.compile(r"\b(most|top|highest|frequently|frequent|maximum|favou?rite)\b", re.I)
+
 
 def _norm(text: str) -> str:
     """'5 kg' -> '5kg', so a spaced size matches a joined one."""
@@ -269,6 +276,21 @@ def _sales(cid: str, entities: dict, message: str, calls: list[ToolCall]) -> tup
 
     items = _collect_items(rows)
     matches = _match_product(message, items.keys())
+
+    if not matches and _TOP_ITEM.search(message or ""):
+        top = _read(calls, "get_top_purchased_items", lambda: c3.top_purchased_items(cid), customer_id=cid)
+        if not top:
+            return "We have no sales invoices on record for you.", None
+        best = top[0]
+        line = (
+            f"Your most-purchased item is {best['item']} — {_qty(best['total_qty'])} {best['unit']} "
+            f"across {best['order_count']} order line(s)."
+        )
+        if len(top) > 1:
+            line += "\nNext: " + ", ".join(
+                f"{r['item']} ({_qty(r['total_qty'])} {r['unit']})" for r in top[1:5]
+            )
+        return line, None
 
     if len(matches) == 1:
         name, occ = matches[0], items[matches[0]]
@@ -476,6 +498,9 @@ TOOL_MENU: dict[str, tuple[str, str, Callable[[str], Any]]] = {
                         lambda cid: c3.get_payment_history(cid)),
     "sales_history": ("past invoices with line items (product, rate, qty)", "get_sales_history",
                       lambda cid: c3.get_sales_history(cid, limit=20)),
+    "top_purchased_items": ("items ranked by quantity bought across ALL sales history — use for "
+                             "'most/top/favourite item' questions", "get_top_purchased_items",
+                             lambda cid: c3.top_purchased_items(cid)),
     "receipts": ("individual receipts and what each settled", "get_receipts",
                  lambda cid: c3.get_receipts(cid, limit=20)),
     "ledger": ("ledger postings with running balance", "get_customer_ledger",

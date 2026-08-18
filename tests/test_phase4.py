@@ -289,6 +289,25 @@ def test_no_product_named_still_lists_recent_invoices(monkeypatch):
     assert "INV-9" in result.customer_message and "most recent invoice" in result.customer_message
 
 
+def test_most_ordered_item_uses_the_aggregate_tool_not_recent_invoices(monkeypatch):
+    """Regression for the query the doc calls out: 'what item did I order the
+    most' names no product, so it used to fall into the generic recent-invoice
+    listing above (wrong answer) instead of the deterministic aggregation."""
+    monkeypatch.setattr(c3, "get_sales_history", lambda cid, limit=None: _ATTA_HISTORY)
+    monkeypatch.setattr(c3, "top_purchased_items", lambda cid, limit=5: [
+        {"item": "Aashirvaad Atta 5kg", "total_qty": 1358280.0, "unit": "Pcs",
+         "order_count": 275, "total_amount": 28631250.0},
+        {"item": "Sugar 1kg", "total_qty": 400.0, "unit": "Pcs",
+         "order_count": 40, "total_amount": 24000.0},
+    ])
+    result = sa1.run(_task("sales_history_enquiry"), _state(message="what item did I order the most?"))
+    assert result.status == "completed"
+    assert "Aashirvaad Atta 5kg" in result.customer_message
+    assert "1,358,280" in result.customer_message  # thousands-separated, never scientific notation
+    assert "e+" not in result.customer_message.lower()
+    assert "get_top_purchased_items" in {c.tool for c in result.tool_calls}
+
+
 def test_document_request_is_acknowledged_not_fabricated():
     result = sa1.run(
         _task("document_request", entities={"voucher_numbers": ["URD/NE/327"]}), _state()
