@@ -43,16 +43,13 @@ from . import services
 from .config import app_db
 from .contracts import AgentResult, AgentTask, CustomerAssistState, ModelOutput, ProposedAction, ToolCall
 from .contracts import utcnow
-from .sa1_general import _inr, _fmt_date, _phrase, _read  # reuse, don't reimplement
+from .sa1_general import _inr, _fmt_date, _phrase, _read, resolve_date_fields  # reuse, don't reimplement
 
 
 # --------------------------------------------------------------------------
 # Due-date parsing — the model reads the open-ended phrasing, the date itself
 # is always our arithmetic, never the model's guess.
 # --------------------------------------------------------------------------
-
-_WEEKDAYS = {d: i for i, d in enumerate(
-    ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"])}
 
 _UNABLE = re.compile(
     r"\b(unable to pay|can'?t pay|cannot pay|not able to pay|no money|"
@@ -106,32 +103,11 @@ def parse_due_date(text: str, today: date) -> date | None:
     extract = _extract_due_date(text)
     if extract is None:
         return None
-
-    if extract.relative_days is not None:
-        return today + timedelta(days=extract.relative_days)
-    if extract.weekday in _WEEKDAYS:
-        delta = (_WEEKDAYS[extract.weekday] - today.weekday()) % 7
-        return today + timedelta(days=delta or 7)  # the next one, never today
-    if extract.end_of_month:
-        first_next = date(today.year + (today.month == 12), (today.month % 12) + 1, 1)
-        return first_next - timedelta(days=1)
-    if extract.day is not None:
-        month = extract.month or today.month
-        try:
-            candidate = date(extract.year or today.year, month, extract.day)
-        except ValueError:
-            return None
-        if extract.year is None and candidate < today:
-            # No year given and the date's already past: next occurrence.
-            # A named month stays that month, next year; an unnamed one just
-            # rolls to next month.
-            next_month = month if extract.month else (month % 12 + 1)
-            try:
-                candidate = date(today.year + 1, next_month, extract.day)
-            except ValueError:
-                return None
-        return candidate
-    return None
+    return resolve_date_fields(
+        relative_days=extract.relative_days, weekday=extract.weekday,
+        end_of_month=extract.end_of_month, day=extract.day,
+        month=extract.month, year=extract.year, today=today,
+    )
 
 
 def _extract_due_date(text: str) -> _DueDateExtract | None:

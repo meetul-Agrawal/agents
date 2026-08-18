@@ -35,7 +35,7 @@ from __future__ import annotations
 import json
 import os
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Callable
 
 from pydantic import BaseModel
@@ -79,6 +79,47 @@ def _fmt_date(value: Any) -> str:
         except Exception:
             pass
     return str(value or "")
+
+
+_WEEKDAYS = {d: i for i, d in enumerate(
+    ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"])}
+
+
+def resolve_date_fields(
+    *, relative_days: int | None, weekday: str | None, end_of_month: bool,
+    day: int | None, month: int | None, year: int | None, today: date,
+) -> date | None:
+    """Turns a model's structured date fields (a day count, a weekday, an
+    explicit day/month/year) into a real `date` — our own arithmetic, never
+    the model's guess. Shared by every agent that reads an open-ended date
+    phrase (`sa2_recovery.parse_due_date`, SA-4's call-schedule extraction):
+    one deterministic core, one hallucination-safe boundary, not a copy per
+    caller. See `sa2_recovery.parse_due_date` for the full rationale."""
+    if relative_days is not None:
+        return today + timedelta(days=relative_days)
+    if weekday in _WEEKDAYS:
+        delta = (_WEEKDAYS[weekday] - today.weekday()) % 7
+        return today + timedelta(days=delta or 7)  # the next one, never today
+    if end_of_month:
+        first_next = date(today.year + (today.month == 12), (today.month % 12) + 1, 1)
+        return first_next - timedelta(days=1)
+    if day is not None:
+        resolved_month = month or today.month
+        try:
+            candidate = date(year or today.year, resolved_month, day)
+        except ValueError:
+            return None
+        if year is None and candidate < today:
+            # No year given and the date's already past: next occurrence.
+            # A named month stays that month, next year; an unnamed one just
+            # rolls to next month.
+            next_month = resolved_month if month else (resolved_month % 12 + 1)
+            try:
+                candidate = date(today.year + 1, next_month, day)
+            except ValueError:
+                return None
+        return candidate
+    return None
 
 
 def _read(calls: list[ToolCall], tool: str, fn: Callable[[], Any], **arguments: Any) -> Any:

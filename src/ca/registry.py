@@ -91,7 +91,7 @@ AGENTS: dict[str, AgentSpec] = {
             name="sa4_approval",
             purpose="Prepare, raise and track human approval requests",
             tools=_ALL_READ + ["create_approval", "update_approval", "create_event"],
-            readable_state=["customer_context", "active_approvals", "active_cases"],
+            readable_state=["customer_context", "conversation_context", "active_approvals", "active_cases"],
             writable_state=["agent_results", "pending_actions"],
             escalation_rules=["never execute an approved-only action without an approval record"],
         ),

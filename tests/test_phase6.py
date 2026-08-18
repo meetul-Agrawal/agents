@@ -297,6 +297,70 @@ def test_approval_type_defaults_to_settlement_with_no_model_entity(monkeypatch):
 
 
 # --------------------------------------------------------------------------
+# SA-4 — call_schedule_request: gather date/time/reason, one structured call,
+# raise only once all three are known.
+# --------------------------------------------------------------------------
+
+
+def test_call_schedule_asks_for_missing_details_when_nothing_extracted(approval_recorder, monkeypatch):
+    """No date/time/reason gathered yet (no model, or a message with none of
+    it): ask, and never raise a half-empty approval."""
+    monkeypatch.setattr(sa4, "_extract_call_schedule", lambda text, history: None)
+    result = sa4.run(_task("sa4_approval", "call_schedule_request"),
+                     _state("I'd like to schedule a call."))
+    approvals, _ = approval_recorder
+    assert result.status == "needs_information"
+    assert result.customer_message
+    assert approvals == []
+
+
+def test_call_schedule_raises_a_pending_approval_once_complete(approval_recorder, monkeypatch):
+    extract = sa4._CallScheduleExtract(relative_days=2, time_text="3pm", reason="discuss pending dispute")
+    monkeypatch.setattr(sa4, "_extract_call_schedule", lambda text, history: extract)
+    result = sa4.run(_task("sa4_approval", "call_schedule_request"),
+                     _state("Call me in 2 days at 3pm about my dispute."))
+    approvals, events = approval_recorder
+    assert result.status == "needs_approval"
+    assert approvals[0]["type"] == "call_schedule"
+    ctx = approvals[0]["context"]
+    assert ctx["preferred_time"] == "3pm"
+    assert ctx["reason"] == "discuss pending dispute"
+    assert events[0][0] == "SALES_CALL_CREATED"
+
+
+def test_call_schedule_extraction_is_handed_the_conversation_history(monkeypatch):
+    """The one structured call reads the recent conversation alongside the
+    current message, so a bare 'yes' confirming a reason we already asked
+    about resolves without a second round trip — this only checks the
+    history actually reaches the extractor; resolving it is the model's job
+    (`_CALL_SCHEDULE_SYSTEM`)."""
+    captured = {}
+
+    def fake_extract(text, history):
+        captured["history"] = history
+        return None
+
+    monkeypatch.setattr(sa4, "_extract_call_schedule", fake_extract)
+    state = _state("yes").model_copy(update={"conversation_context": [
+        Message(conversation_id="CNV-1", channel="chat", direction="outbound",
+                text="Would this call be regarding your open dispute on INV-1?"),
+        Message(conversation_id="CNV-1", channel="chat", direction="inbound", text="yes"),
+    ]})
+    sa4.run(_task("sa4_approval", "call_schedule_request"), state)
+    assert "open dispute on INV-1" in captured["history"]
+
+
+def test_call_schedule_decision_message_states_the_confirmed_slot(monkeypatch):
+    approval = Approval(customer_id=CID, type="call_schedule", requested_by="sa4_approval",
+                        context={"scheduled_date": "2026-08-20", "preferred_time": "3pm",
+                                 "reason": "discuss pending dispute"})
+    approved = sa4.decision_message(approval, True)
+    rejected = sa4.decision_message(approval, False)
+    assert "2026-08-20" in approved and "3pm" in approved
+    assert "2026-08-20" in rejected and "3pm" in rejected
+
+
+# --------------------------------------------------------------------------
 # SA-4 — context gathering, grounding, and the pending-only guarantee
 # --------------------------------------------------------------------------
 

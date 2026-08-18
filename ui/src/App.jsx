@@ -24,6 +24,7 @@ function inr(amount) {
 const APPROVAL_TYPE_LABEL = {
   special_discount: 'Special discount', settlement: 'Settlement', credit_limit: 'Credit limit',
   large_credit_note: 'Credit note', write_off: 'Write-off', exceptional_terms: 'Payment terms',
+  call_schedule: 'Call schedule',
 }
 
 // ── Approval detail — approve / reject ──────────────────────────────────────

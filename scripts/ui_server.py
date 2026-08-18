@@ -379,12 +379,17 @@ def _agent_event_feed(adb, limit: int = 12) -> list[dict]:
         meta = _AGENT_EVENT_META["sa4_approval"]
         amt = f" of ₹{a['amount']:,.0f}" if a.get("amount") is not None else ""
         ctx = a.get("context") or {}
-        facts = []
-        if ctx.get("outstanding") is not None:
-            facts.append(f"₹{ctx['outstanding']:,.0f} outstanding across {ctx.get('open_bill_count', 0)} invoices")
-        if ctx.get("avg_days_to_settle") is not None:
-            facts.append(f"avg {ctx['avg_days_to_settle']:.0f}d to settle over {ctx.get('receipt_count', 0)} receipts")
-        facts.append(f"{ctx.get('prior_approvals', 0)} prior approvals ({ctx.get('prior_approvals_granted', 0)} granted)")
+        if a["type"] == "call_schedule":
+            facts = [f"{ctx.get('scheduled_date', '?')} around {ctx.get('preferred_time', '?')}"]
+            if ctx.get("reason"):
+                facts.append(f"reason: {ctx['reason']}")
+        else:
+            facts = []
+            if ctx.get("outstanding") is not None:
+                facts.append(f"₹{ctx['outstanding']:,.0f} outstanding across {ctx.get('open_bill_count', 0)} invoices")
+            if ctx.get("avg_days_to_settle") is not None:
+                facts.append(f"avg {ctx['avg_days_to_settle']:.0f}d to settle over {ctx.get('receipt_count', 0)} receipts")
+            facts.append(f"{ctx.get('prior_approvals', 0)} prior approvals ({ctx.get('prior_approvals_granted', 0)} granted)")
         detail = f"Reason: {_labelize(a['type'])}{amt} — " + ", ".join(facts)
         tags = [{"label": _labelize(a["status"]), "color": _APPROVAL_STATUS_COLOR.get(a["status"], "amber")}]
         if a.get("decided_by"):

@@ -216,6 +216,11 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
               "Always needs human authority",
         not_when="they want goods collected but name no credit document",
     ),
+    "call_schedule_request": IntentSpec(
+        agent="sa4_approval",
+        means="wants a phone call scheduled with the sales or accounts team, at a "
+              "chosen date and time",
+    ),
     "health_enquiry": IntentSpec(
         agent="sa7_health",
         means="an internal colleague asks how sound the relationship is — a score, "
@@ -600,6 +605,8 @@ def _continuity_fallback(conversation_id: str | None, why: str) -> list[Intent]:
         return [Intent(name="dispute", confidence=0.5, entities={"agent": "sa3_dispute"}, reason=why)]
     if _recent_intent_turn(conversation_id, "payment_promise", _RECENT_INTENT_WINDOW):
         return [Intent(name="payment_promise", confidence=0.5, entities={"agent": "sa2_recovery"}, reason=why)]
+    if _recent_intent_turn(conversation_id, "call_schedule_request", _RECENT_INTENT_WINDOW):
+        return [Intent(name="call_schedule_request", confidence=0.5, entities={"agent": "sa4_approval"}, reason=why)]
     return _UNKNOWN_INTENT
 
 
@@ -971,6 +978,16 @@ def classify_intent(
             "Unless the current message is clearly about something else, classify it as "
             "continuing that promise (intent \"payment_promise\") rather than a fresh, "
             "unrelated ask — even if it is just a bare amount or date.]"
+        )
+    if _recent_intent_turn(state.conversation_id, "call_schedule_request", _RECENT_INTENT_WINDOW):
+        # Same bias, for call scheduling: a bare "3pm" or "yes" answering our
+        # own "what date, time and reason works for you?" reads as an
+        # unrelated ask without this.
+        history += (
+            "\n\n[This conversation has a call-scheduling request being confirmed. "
+            "Unless the current message is clearly about something else, classify it "
+            "as continuing that request (intent \"call_schedule_request\") rather than "
+            "a fresh, unrelated ask — even if it is just a bare date, time or reason.]"
         )
     context = {"history": history, "conversation_id": state.conversation_id, **config.get("case_context", {})}
     intents = classifier(state.message, context)

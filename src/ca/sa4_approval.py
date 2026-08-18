@@ -46,8 +46,9 @@ from .contracts import (
     ProposedAction,
     ToolCall,
     APPROVAL_TYPES,
+    utcnow,
 )
-from .sa1_general import _inr, _phrase, _read, compose_grounded
+from .sa1_general import _inr, _fmt_date, _phrase, _read, compose_grounded, resolve_date_fields
 
 
 def _approval_type(intents: list[str], entities: dict[str, Any]) -> str:
@@ -60,7 +61,12 @@ def _approval_type(intents: list[str], entities: dict[str, Any]) -> str:
     special_discount (evals/reports/dispute_approval_scenarios.md, Finding 3)
     even when the intent classifier correctly tagged credit_note_request.
     `settlement` is the safe default when neither says anything more specific
-    — the most generic of the six, never a wrong specific category."""
+    — the most generic of the six, never a wrong specific category.
+
+    call_schedule_request is its own intent with its own single category —
+    same direct-fact shape as credit_note_request, checked first."""
+    if "call_schedule_request" in intents:
+        return "call_schedule"
     if "credit_note_request" in intents:
         return "large_credit_note"
     claimed = entities.get("approval_type")
@@ -196,6 +202,183 @@ def _amount(entities: dict[str, Any]) -> float | None:
     return float(amounts[0]) if amounts else None
 
 
+# --------------------------------------------------------------------------
+# call_schedule_request — date, time and reason, one structured call.
+#
+# Same shape as sa2_recovery's due-date extraction: the customer's phrasing is
+# open-ended, so the model reads it, but only into structured fields
+# (day count / weekday / day-month-year) that `resolve_date_fields` (shared
+# with SA-2) turns into a real date — a hallucinated date has nowhere to
+# enter. `time_text` and `reason` carry no such risk (nothing downstream does
+# arithmetic on them, and a human reviewer reads them before anyone acts), so
+# they are taken as the model's own paraphrase, same trust level as SA-3's
+# `issue_label` (contracts.Request docstring).
+#
+# The model is handed the recent conversation history in the same call, so it
+# can read a confirmation ("yes", "haan") against a reason it — or a colleague
+# — already asked the customer to confirm, rather than that needing a second
+# round trip.
+# --------------------------------------------------------------------------
+
+
+class _CallScheduleExtract(ModelOutput):
+    relative_days: int | None = None
+    weekday: str | None = None
+    end_of_month: bool = False
+    day: int | None = None
+    month: int | None = None
+    year: int | None = None
+    time_text: str | None = None
+    reason: str | None = None
+
+
+_CALL_SCHEDULE_SYSTEM = (
+    "Extract the details of a customer's request to schedule a phone call with "
+    "our sales/accounts team, from their current message and (if given) the "
+    "recent conversation history. Return ONLY the fields that apply; leave the "
+    "rest null/false.\n"
+    "- relative_days: an offset in days from today. 'today'=0, 'tomorrow'=1, "
+    "'day after tomorrow'=2, 'in N days'/'after N days'/'within N days'=N, "
+    "'next week'=7. A COUNT of days, never a day-of-month.\n"
+    "- weekday: one of monday..sunday, if a weekday is named. Always the NEXT "
+    "such day, never today.\n"
+    "- end_of_month: true only for 'end of month' / 'month-end'.\n"
+    "- day: an explicit day-of-month ('the 26th', 'on 20', '20 August' -> day=20).\n"
+    "- month: 1-12, only if a month name or a slash/ISO date names one.\n"
+    "- year: only if a 4-digit year is explicitly stated.\n"
+    "- time_text: the customer's own phrasing of a preferred time of day "
+    "('3pm', 'after lunch', 'morning'), copied verbatim. Null if no time is "
+    "stated anywhere.\n"
+    "- reason: a short phrase for why they want the call. Prefer their own "
+    "stated reason in the current message. If the current message gives no "
+    "reason but the conversation history shows we already asked the customer "
+    "to confirm a specific reason (e.g. an open dispute or a pending order) "
+    "and the current message agrees ('yes', 'haan', 'correct', 'right'), set "
+    "reason to that confirmed topic. Never invent a reason nobody stated or "
+    "agreed to.\n"
+    "Never guess a field that isn't stated in the text."
+)
+
+
+def _extract_call_schedule(text: str, history: str) -> _CallScheduleExtract | None:
+    import os
+
+    from . import llm
+
+    if os.getenv("CA_PHRASE", "on").lower() == "off" or not llm.available():
+        return None
+    payload: dict[str, Any] = {"customer_message": text}
+    if history:
+        payload["recent_conversation_history"] = history
+    try:
+        return llm.complete_structured(
+            _CallScheduleExtract, _CALL_SCHEDULE_SYSTEM, json.dumps(payload),
+            capability="summarization",
+            example={"relative_days": 2, "weekday": None, "end_of_month": False,
+                     "day": None, "month": None, "year": None,
+                     "time_text": "3pm", "reason": "discuss the pending dispute"},
+        )
+    except llm.LLMUnavailable:
+        return None
+
+
+def _history_text(state: CustomerAssistState) -> str:
+    lines: list[str] = []
+    for m in state.conversation_context[-20:]:
+        text = (m.text or "").strip()
+        if not text:
+            continue
+        speaker = "Customer" if m.direction == "inbound" else "Assistant"
+        lines.append(f"{speaker}: {text}")
+    return "\n".join(lines)
+
+
+def _run_call_schedule(task: AgentTask, state: CustomerAssistState, message_id: str | None) -> AgentResult:
+    cid = state.customer_id
+    calls: list[ToolCall] = []
+
+    def result(status: str, message: str | None, actions: list[ProposedAction] | None = None) -> AgentResult:
+        return AgentResult(
+            agent="sa4_approval", agent_task_id=task.agent_task_id, status=status,
+            customer_message=message, tool_calls=calls, actions=actions or [],
+            summary="handled call_schedule_request",
+        )
+
+    extract = _extract_call_schedule(state.message, _history_text(state))
+    call_date = resolve_date_fields(
+        relative_days=extract.relative_days if extract else None,
+        weekday=extract.weekday if extract else None,
+        end_of_month=extract.end_of_month if extract else False,
+        day=extract.day if extract else None,
+        month=extract.month if extract else None,
+        year=extract.year if extract else None,
+        today=utcnow().date(),
+    ) if extract else None
+    time_text = (extract.time_text or "").strip() if extract else ""
+    reason = (extract.reason or "").strip() if extract else ""
+
+    missing = []
+    if call_date is None:
+        missing.append("a preferred date")
+    if not time_text:
+        missing.append("a preferred time")
+    if not reason:
+        missing.append("the reason for the call")
+
+    if missing:
+        facts: dict[str, Any] = {"missing": missing}
+        have = {k: v for k, v in (("date", _fmt_date(call_date) if call_date else None),
+                                   ("time", time_text or None), ("reason", reason or None)) if v}
+        if have:
+            facts["already_have"] = have
+        composed = compose_grounded(
+            "Write a short reply asking the customer for the missing details "
+            "needed to schedule their call with our sales team. Ask only for "
+            "what is listed as missing; do not ask again for anything already given.",
+            facts,
+        )
+        ask = composed or _phrase(f"Sure — to schedule your call, could you share {', '.join(missing)}?")
+        return result("needs_information", ask)
+
+    context = {"scheduled_date": call_date.isoformat(), "preferred_time": time_text, "reason": reason}
+    summary_facts = {"date": _fmt_date(call_date), "time": time_text, "reason": reason}
+    summary = compose_grounded(
+        "Write ONE short sentence summarizing this call-scheduling request, for "
+        "a human reviewer glancing at a list of pending requests. State only "
+        "the facts given.",
+        summary_facts,
+    ) or f"Call requested for {_fmt_date(call_date)} ({time_text}) — {reason}."
+
+    approval, created = services.create_approval(
+        cid, "call_schedule", "sa4_approval", context=context,
+        recommendation=f"Customer-requested call: {summary_facts['date']}, {time_text}. Reason: {reason}.",
+        summary=summary, conversation_id=state.conversation_id, message_id=message_id,
+    )
+    calls.append(ToolCall(tool="create_approval", arguments={"approval_id": approval.approval_id}))
+    actions = [ProposedAction(
+        type="create_approval", mode="auto", executed=True,
+        payload={"approval_id": approval.approval_id, "type": "call_schedule"},
+    )]
+    if created:
+        services.record_event(
+            cid, "SALES_CALL_CREATED", "sa4_approval", conversation_id=state.conversation_id,
+            message_id=message_id, payload={"approval_id": approval.approval_id, **context},
+        )
+        calls.append(ToolCall(tool="create_event"))
+
+    composed_reply = compose_grounded(
+        "Write a short reply telling the customer we've logged their call "
+        "request and someone from the team will confirm it.",
+        summary_facts,
+    )
+    message = composed_reply or _phrase(
+        f"Thank you — we've logged your request for a call on {summary_facts['date']} around "
+        f"{time_text} regarding {reason} (reference {approval.approval_id}). Someone from our "
+        "team will confirm the exact time with you shortly."
+    )
+    return result("needs_approval", message, actions)
+
+
 def _intents_of(task: AgentTask) -> list[str]:
     named = task.inputs.get("intents")
     if isinstance(named, list) and named:
@@ -216,9 +399,18 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
             summary=f"handled {'+'.join(intents) or 'approval request'}",
         )
 
-    relevant = {"settlement_request", "credit_note_request"} & set(intents)
+    relevant = {"settlement_request", "credit_note_request", "call_schedule_request"} & set(intents)
     if not relevant or not state.customer_id:
         return result("needs_information", None, [])
+
+    # call_schedule_request is a distinct, multi-turn gather-then-raise flow
+    # (date/time/reason may take a turn or two to complete) — handled on its
+    # own rather than folded into the immediate-raise path below. As with
+    # settlement/credit_note today, a message combining this with one of them
+    # is handled as call_schedule_request alone this turn; only one approval
+    # is ever raised per turn regardless of how many of these intents fire.
+    if "call_schedule_request" in intents:
+        return _run_call_schedule(task, state, message_id)
 
     cid = state.customer_id
     calls: list[ToolCall] = []
@@ -280,6 +472,18 @@ def decision_message(approval: Approval, approved: bool, note: str = "") -> str:
     ("we appreciate your patience") — `_grounded` only blocks a new *number*,
     it does not check the note's content survived, so a paraphrase step here
     has a real chance of deleting the actual reason ops wrote."""
+    if approval.type == "call_schedule":
+        ctx = approval.context or {}
+        when = ", ".join(v for v in (ctx.get("scheduled_date"), ctx.get("preferred_time")) if v)
+        if approved:
+            anchor = f"Confirmed — our team will call you{f' on {when}' if when else ''} (reference {approval.approval_id})."
+        else:
+            anchor = (
+                f"We're unable to schedule a call{f' on {when}' if when else ''} (reference "
+                f"{approval.approval_id}) at this time."
+            )
+        return f"{anchor} {note}" if note else anchor
+
     amount_text = f" of {_inr(approval.amount)}" if approval.amount is not None else ""
     if approved:
         anchor = f"Good news — your request{amount_text} (reference {approval.approval_id}) has been approved."

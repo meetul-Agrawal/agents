@@ -534,6 +534,7 @@ ApprovalType = Literal[
     "large_credit_note",
     "write_off",
     "exceptional_terms",
+    "call_schedule",
 ]
 APPROVAL_TYPES: frozenset[str] = frozenset(ApprovalType.__args__)
 
