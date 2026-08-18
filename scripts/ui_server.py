@@ -7,7 +7,7 @@ from __future__ import annotations
 import json
 import pathlib
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from fastapi import FastAPI
@@ -321,24 +321,40 @@ def _agent_event_feed(adb, limit: int = 12) -> list[dict]:
     def cust(d):
         return names.get(d["customer_id"], "Trade Counterparty")
 
+    # Tag colors reuse the existing tag-metric palette (tag-rose/amber/indigo/emerald).
+    _PRIORITY_COLOR = {"critical": "rose", "high": "rose", "normal": "amber", "low": "emerald"}
+    _CASE_STATUS_COLOR = {"open": "amber", "investigating": "amber", "waiting": "amber", "resolved": "emerald", "closed": "emerald"}
+    _APPROVAL_STATUS_COLOR = {"pending": "amber", "approved": "emerald", "rejected": "rose", "expired": "rose"}
+
     events = []
     for c in cases:
         meta = _AGENT_EVENT_META["sa3_dispute"]
+        tags = [
+            {"label": c["priority"].upper(), "color": _PRIORITY_COLOR.get(c["priority"], "amber")},
+            {"label": _labelize(c["status"]), "color": _CASE_STATUS_COLOR.get(c["status"], "amber")},
+        ]
+        detail = f"Reason: {c['title']}"
+        if c.get("resolution"):
+            detail += f" — Resolution: {c['resolution']}"
         events.append({
             "event_id": c["case_id"], "agent": "sa3_dispute", **meta,
             "customer_name": cust(c), "timestamp": c["created_at"],
             "headline": f"Case {c['case_id']} opened for {cust(c)}",
-            "detail": f"Reason: {c['title']}",
+            "detail": detail, "tags": tags,
             "ref_type": meta["tab"], "ref_id": c["case_id"],
         })
     for a in approvals:
         meta = _AGENT_EVENT_META["sa4_approval"]
         amt = f" of ₹{a['amount']:,.0f}" if a.get("amount") is not None else ""
+        detail = f"Reason: {_labelize(a['type'])}{amt}" + (f" — {a['recommendation']}" if a.get("recommendation") else "")
+        tags = [{"label": _labelize(a["status"]), "color": _APPROVAL_STATUS_COLOR.get(a["status"], "amber")}]
+        if a.get("decided_by"):
+            detail += f" — Decided by {a['decided_by']}"
         events.append({
             "event_id": a["approval_id"], "agent": "sa4_approval", **meta,
             "customer_name": cust(a), "timestamp": a["created_at"],
             "headline": f"Approval {a['approval_id']} requested for {cust(a)}",
-            "detail": f"Reason: {_labelize(a['type'])}{amt}" + (f" — {a['recommendation']}" if a.get("recommendation") else ""),
+            "detail": detail, "tags": tags,
             "ref_type": meta["tab"], "ref_id": a["approval_id"],
         })
     for p in promises:
@@ -349,10 +365,15 @@ def _agent_event_feed(adb, limit: int = 12) -> list[dict]:
             if modified else
             f"{cust(p)} committed to pay ₹{p['amount']:,.0f} by {p['due_date']}"
         )
+        overdue = p["status"] == "promised" and date.fromisoformat(p["due_date"]) < date.today()
+        tags = [{"label": "OVERDUE" if overdue else _labelize(p["status"]), "color": "rose" if overdue else "indigo"}]
+        detail = f"Status: {_labelize(p['status'])}"
+        if p.get("paid_amount"):
+            detail += f" — Paid so far: ₹{p['paid_amount']:,.0f}"
         events.append({
             "event_id": p["promise_id"], "agent": "sa2_recovery", **meta,
             "customer_name": cust(p), "timestamp": p["updated_at"] or p["created_at"],
-            "headline": headline, "detail": f"Status: {_labelize(p['status'])}",
+            "headline": headline, "detail": detail, "tags": tags,
             "ref_type": meta["tab"], "ref_id": p["promise_id"],
         })
 

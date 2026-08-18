@@ -349,6 +349,13 @@ export default function App() {
                       </span>
                     </div>
                     <div className="cc-event-headline">{item.headline}</div>
+                    {(item.tags || []).length > 0 && (
+                      <div className="cc-event-tags">
+                        {item.tags.map((t, i) => (
+                          <span key={i} className={`tag-metric tag-${t.color}`}>{t.label}</span>
+                        ))}
+                      </div>
+                    )}
                     {item.detail && <div className="cc-event-detail">{item.detail}</div>}
                     <button
                       className="cc-event-jump"
