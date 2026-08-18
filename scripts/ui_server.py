@@ -287,7 +287,13 @@ def update_promise_status(promise_id: str, body: PromiseStatusReq):
         conversation_id=doc.get("conversation_id"),
         payload={"promise_id": promise_id, "status": body.status, "note": body.note},
     )
-    return {"ok": True, "promise": _clean(updated)}
+# ── Call Prep ────────────────────────────────────────────────────────────────
+
+@app.get("/api/customers/{customer_id}/call-prep")
+def get_customer_call_prep(customer_id: str, conversation_id: str | None = None):
+    from ca import call_prep
+    brief = call_prep.build_call_prep(customer_id, conversation_id=conversation_id)
+    return brief.model_dump(mode="json")
 
 
 # ── Label ─────────────────────────────────────────────────────────────────────

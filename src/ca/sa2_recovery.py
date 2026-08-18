@@ -36,6 +36,7 @@ from typing import Any
 
 from . import customer360 as c3
 from . import services
+from .config import app_db
 from .contracts import AgentResult, AgentTask, CustomerAssistState, ProposedAction, ToolCall
 from .contracts import utcnow
 from .sa1_general import _inr, _fmt_date, _phrase, _read  # reuse, don't reimplement
@@ -100,22 +101,28 @@ def parse_due_date(text: str, today: date) -> date | None:
         except ValueError:
             return None
 
-    # Scan every "20 August" / "August 20" candidate, not just the first token
-    # pair — "2 lakh by 20 August" leads with a non-month "2 lakh".
-    for m in re.finditer(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})\b", t):  # 20 August
+    # Identify if a month is mentioned anywhere in the message to provide context
+    month_match = re.search(r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b", t)
+    target_month = _MONTHS[month_match.group(1)[:3]] if month_match else today.month
+
+    # Strip out explicitly negated/superseded dates like "instead of 13 September"
+    cleaned = re.sub(r"\b(?:instead of|not on|rather than)\s+(?:\d{1,2}(?:st|nd|rd|th)?\s+[a-z]+|[a-z]+\s+\d{1,2}(?:st|nd|rd|th)?|\d{1,2}(?:st|nd|rd|th)?)\b", "", t)
+
+    # Scan every "20 August" / "August 20" candidate in cleaned text
+    for m in re.finditer(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]{3,9})\b", cleaned):  # 20 August
         if m.group(2)[:3] in _MONTHS:
             try:
                 return _roll(date(today.year, _MONTHS[m.group(2)[:3]], int(m.group(1))), today)
             except ValueError:
                 pass
-    for m in re.finditer(r"\b([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?\b", t):  # August 20
+    for m in re.finditer(r"\b([a-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?\b", cleaned):  # August 20
         if m.group(1)[:3] in _MONTHS:
             try:
                 return _roll(date(today.year, _MONTHS[m.group(1)[:3]], int(m.group(2))), today)
             except ValueError:
                 pass
 
-    m = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b", t)  # 25/08 or 25-08-2026
+    m = re.search(r"\b(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?\b", cleaned)  # 25/08 or 25-08-2026
     if m:
         day, month, year = int(m[1]), int(m[2]), m[3]
         try:
@@ -126,18 +133,18 @@ def parse_due_date(text: str, today: date) -> date | None:
         except ValueError:
             return None
 
-    # A bare day-of-month with no month named ("by the 23rd") means the next
-    # such date in the current or following month.
-    m = re.search(r"\bby\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b", t)
+    # A bare day-of-month ("by the 23rd" or "by 20th") inherits the month context if a month was named,
+    # or the current/next month.
+    m = re.search(r"\b(?:by|on|till|before)\s+(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\b", cleaned)
     if m:
         day = int(m.group(1))
         try:
-            candidate = date(today.year, today.month, day)
+            candidate = date(today.year, target_month, day)
         except ValueError:
             return None
         if candidate < today:
-            next_month = today.month % 12 + 1
-            next_year = today.year + (today.month == 12)
+            next_month = target_month % 12 + 1 if not month_match else target_month
+            next_year = today.year + 1
             try:
                 candidate = date(next_year, next_month, day)
             except ValueError:
@@ -176,12 +183,30 @@ def _add_task(
 def _fill_from_open_promise(
     cid: str, meta: dict, amount: float | None, due: date | None, calls: list[ToolCall],
 ) -> tuple[float | None, date | None]:
-    """A turn that only answers the half of the promise still missing ("by the
-    23rd") carries no amount of its own — the amount lives in the message that
-    started the promise. Recover the missing half from the customer's own last
-    incomplete-promise event, so answering the question we asked doesn't reset it."""
+    """A turn that only answers half of a promise, or modifies an existing open
+    promise (e.g. 'instead of 13 Sept I will pay by 20th' or 'I will pay 30000 instead'),
+    recovers the missing half from the open promise in MongoDB or the customer's last
+    incomplete-promise event."""
     if amount is not None and due is not None:
         return amount, due
+
+    # 1. Check existing active open promise for this customer in MongoDB
+    open_promise = _read(
+        calls, "get_open_promise",
+        lambda: app_db()["payment_promises"].find_one({"customer_id": cid, "status": "promised"}),
+        customer_id=cid,
+    )
+    if open_promise:
+        if amount is None and open_promise.get("amount") is not None:
+            amount = float(open_promise["amount"])
+        if due is None and open_promise.get("due_date"):
+            d_val = open_promise["due_date"]
+            due = date.fromisoformat(d_val) if isinstance(d_val, str) else d_val
+
+    if amount is not None and due is not None:
+        return amount, due
+
+    # 2. Check incomplete promise events from current conversation
     events = _read(calls, "get_events", lambda: c3.get_events(cid, limit=10), customer_id=cid, limit=10)
     for event in events or []:
         if event.get("type") != "RECOVERY_CONTACTED":

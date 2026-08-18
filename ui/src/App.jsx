@@ -309,6 +309,178 @@ function PromiseDetail({ promise, onUpdated }) {
   )
 }
 
+// ── Call Prep Modal ──────────────────────────────────────────────────────────
+
+function CallPrepModal({ data, loading, onClose, onRefresh }) {
+  const [scriptLang, setScriptLang] = useState('hinglish') // 'hinglish' | 'english'
+  const [copied, setCopied] = useState(false)
+
+  if (!data && loading) {
+    return (
+      <div className="modal-backdrop" onClick={onClose}>
+        <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px', textAlign: 'center', padding: '36px 24px' }}>
+          <div style={{ fontSize: '24px', marginBottom: '12px' }}>📞</div>
+          <div style={{ fontSize: '15px', fontWeight: 600, color: 'var(--text)', marginBottom: '6px' }}>
+            Analyzing MongoDB Records & Chat Context…
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+            Building personalized talking points and dialogue scripts…
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!data) return null
+
+  function copyScript() {
+    const text = scriptLang === 'hinglish' ? data.call_script_hinglish : data.call_script_english
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-content" onClick={e => e.stopPropagation()}>
+        <div className="modal-header">
+          <div className="modal-title-row">
+            <span style={{ fontSize: '22px' }}>📞</span>
+            <div>
+              <div className="modal-title">Call Prep Brief · {data.customer_name}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                Customer ID: {data.customer_id} · Grounded in live MongoDB books & conversation history
+              </div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            <button className="copy-btn" onClick={onRefresh} disabled={loading} title="Re-generate with fresh context">
+              {loading ? '↻ Loading…' : '↻ Refresh'}
+            </button>
+            <button className="modal-close" onClick={onClose}>✕</button>
+          </div>
+        </div>
+
+        <div className="modal-body">
+          {/* Account Overview Cards */}
+          <div className="prep-stat-grid">
+            <div className="prep-stat-card">
+              <div className="prep-stat-lbl">Total Outstanding</div>
+              <div className="prep-stat-val" style={{ color: '#f87171' }}>{data.total_outstanding_formatted}</div>
+              <div style={{ fontSize: '10px', color: 'var(--text-muted)', marginTop: '2px' }}>{data.open_bills_count} open bill(s)</div>
+            </div>
+            <div className="prep-stat-card">
+              <div className="prep-stat-lbl">Ageing Breakdown</div>
+              <div className="prep-stat-val" style={{ fontSize: '12px' }}>{data.ageing_summary}</div>
+            </div>
+            <div className="prep-stat-card">
+              <div className="prep-stat-lbl">Payment Track Record</div>
+              <div className="prep-stat-val" style={{ fontSize: '12px' }}>{data.payment_behaviour_summary}</div>
+            </div>
+            <div className="prep-stat-card">
+              <div className="prep-stat-lbl">Active Promises / Disputes</div>
+              <div className="prep-stat-val" style={{ fontSize: '12px' }}>
+                {data.active_promise_summary} · {data.open_dispute_summary}
+              </div>
+            </div>
+          </div>
+
+          {/* Account Summary & Chat Context */}
+          <div className="sec">
+            <div className="sec-title">Account Summary & Chat Context</div>
+            <div className="final-resp" style={{ marginBottom: '6px' }}>
+              <strong>Summary:</strong> {data.account_summary}
+            </div>
+            {data.recent_chat_summary && (
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', background: 'var(--page-bg)', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border-light)' }}>
+                <strong>Recent Thread Context:</strong> {data.recent_chat_summary}
+              </div>
+            )}
+          </div>
+
+          {/* Key Talking Points */}
+          <div className="sec">
+            <div className="sec-title">Key Talking Points (Checklist for Caller)</div>
+            {data.talking_points?.map((tp, idx) => (
+              <div key={idx} className={`talking-point-item priority-${tp.priority || 'medium'}`}>
+                <div className="talking-point-title">
+                  <span className={`badge ${tp.priority === 'high' ? 'b-red' : tp.priority === 'medium' ? 'b-yellow' : 'b-blue'}`}>
+                    {tp.category || 'Topic'}
+                  </span>
+                  <span>{tp.point}</span>
+                </div>
+                <div className="talking-point-detail">{tp.detail}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Call Script Section */}
+          <div className="sec">
+            <div className="script-tab-row">
+              <div className="sec-title" style={{ margin: 0 }}>Call Dialogue Script</div>
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <div className="script-tabs">
+                  <button
+                    className={`script-tab-btn${scriptLang === 'hinglish' ? ' active' : ''}`}
+                    onClick={() => setScriptLang('hinglish')}
+                  >
+                    Hindi / Hinglish
+                  </button>
+                  <button
+                    className={`script-tab-btn${scriptLang === 'english' ? ' active' : ''}`}
+                    onClick={() => setScriptLang('english')}
+                  >
+                    English
+                  </button>
+                </div>
+                <button className="copy-btn" onClick={copyScript}>
+                  {copied ? '✓ Copied!' : '📋 Copy Script'}
+                </button>
+              </div>
+            </div>
+            <div className="script-box">
+              {scriptLang === 'hinglish' ? data.call_script_hinglish : data.call_script_english}
+            </div>
+          </div>
+
+          {/* Objection Handling */}
+          {data.objection_handling && data.objection_handling.length > 0 && (
+            <div className="sec">
+              <div className="sec-title">Anticipated Objections & Response Strategy</div>
+              {data.objection_handling.map((obj, idx) => (
+                <div key={idx} className="objection-card">
+                  <div className="obj-q">❓ Customer Objection: "{obj.likely_objection}"</div>
+                  <div className="obj-a">💡 <strong>Tactical Response:</strong> {obj.recommended_response}</div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Target Commitment & Notes */}
+          <div className="sec flags-row">
+            <div style={{ flex: 1 }}>
+              <div className="sec-title">Recommended Target Commitment</div>
+              <div className="final-resp" style={{ color: 'var(--accent)', fontWeight: 600 }}>
+                🎯 {data.recommended_target_commitment}
+              </div>
+            </div>
+            {data.notes_for_agent && data.notes_for_agent.length > 0 && (
+              <div style={{ flex: 1 }}>
+                <div className="sec-title">Caller Behavioral Notes</div>
+                <ul className="detail-list">
+                  {data.notes_for_agent.map((n, i) => <li key={i}>• {n}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Right panel ───────────────────────────────────────────────────────────────
 
 function RightPanel({ cls, classifier, activeConv, lastInput, customerId, allIntents }) {
@@ -502,8 +674,12 @@ export default function App() {
   const [selectedId, setSelectedId] = useState(null)
   const bottomRef = useRef(null)
 
-  // New-thread customer selection (only used when creating, not global)
   const [newThreadCustId, setNewThreadCustId] = useState('')
+
+  // Call prep state
+  const [callPrep, setCallPrep] = useState(null)
+  const [callPrepLoading, setCallPrepLoading] = useState(false)
+  const [showCallPrepModal, setShowCallPrepModal] = useState(false)
 
   const [leftTab,   setLeftTab]   = useState('threads') // 'threads' | 'approvals' | 'disputes' | 'promises'
   const [approvals, setApprovals] = useState([])
@@ -629,6 +805,21 @@ export default function App() {
 
   // Look up display name for the active conversation's customer
   const activeCustomer = customers.find(c => c.customer_id === customerId)
+
+  async function handleOpenCallPrep() {
+    if (!customerId) return
+    setCallPrepLoading(true)
+    setShowCallPrepModal(true)
+    try {
+      const convParam = activeConv?.conversation_id ? `?conversation_id=${activeConv.conversation_id}` : ''
+      const res = await api.get(`/api/customers/${customerId}/call-prep${convParam}`)
+      setCallPrep(res)
+    } catch (e) {
+      console.error(e)
+    } finally {
+      setCallPrepLoading(false)
+    }
+  }
 
   // Helper: look up customer display name by id (for thread list)
   function custName(cid) {
@@ -797,6 +988,14 @@ export default function App() {
                 disabled={loading}
               />
               <div className="controls">
+                <button
+                  className="call-prep-btn"
+                  onClick={handleOpenCallPrep}
+                  disabled={!customerId || callPrepLoading}
+                  title={customerId ? "Generate Call Brief & Talking Script for this customer" : "Select a thread with a customer first"}
+                >
+                  {callPrepLoading ? '⏳ Prep…' : '📞 Call Prep'}
+                </button>
                 <div className="clf-toggle">
                   <button className="clf-btn clf-on">LLM</button>
                 </div>
@@ -822,6 +1021,15 @@ export default function App() {
           allIntents={allIntents}
         />
       </aside>
+
+      {showCallPrepModal && (
+        <CallPrepModal
+          data={callPrep}
+          loading={callPrepLoading}
+          onClose={() => setShowCallPrepModal(false)}
+          onRefresh={handleOpenCallPrep}
+        />
+      )}
 
     </div>
   )

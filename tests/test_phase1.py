@@ -517,3 +517,17 @@ def test_payment_history_query_filtering(live):
     res_amt = query_payment_history(cid, q_amt)
     assert all(r["amount"] >= 1000000 for r in res_amt["receipts"])
 
+
+def test_call_prep_generation(live):
+    from ca.call_prep import build_call_prep
+
+    cid = "6a6464a19f707bd30403790f"
+    brief = build_call_prep(cid)
+    assert brief.customer_name == "Indore, Saibaba Enterprises"
+    assert brief.open_bills_count > 0
+    assert "₹" in brief.total_outstanding_formatted
+    assert len(brief.talking_points) > 0
+    assert len(brief.call_script_hinglish) > 0
+    assert len(brief.call_script_english) > 0
+    assert len(brief.objection_handling) > 0
+
