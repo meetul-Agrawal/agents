@@ -560,6 +560,33 @@ def _raise_unavailable(*args, **kwargs):
     raise LLMUnavailable("no provider")
 
 
+def test_llm_unavailable_continues_open_dispute_case(monkeypatch):
+    """A model outage mid-dispute must not look like a new conversation —
+    verified against CNV-2026-d52bb4c6157d, where a customer's invoice-number
+    reply got 'what's on your mind?' because an LLMUnavailable turn dropped
+    the open case straight to the unknown/sa1_general fallback."""
+    orc._understand.cache_clear()
+    monkeypatch.setattr(orc, "complete_structured", _raise_unavailable)
+    monkeypatch.setattr(orc, "app_db", lambda: {
+        "cases": type("C", (), {"find_one": staticmethod(lambda q: {"case_id": "CASE-1", "status": "open"})})()
+    })
+
+    intents = orc.classify_llm("2025-26/05", {"conversation_id": "CNV-test"})
+    assert [i.name for i in intents] == ["dispute"]
+    assert intents[0].entities["agent"] == "sa3_dispute"
+
+
+def test_llm_unavailable_no_open_case_stays_unknown(monkeypatch):
+    orc._understand.cache_clear()
+    monkeypatch.setattr(orc, "complete_structured", _raise_unavailable)
+    monkeypatch.setattr(orc, "app_db", lambda: {
+        "cases": type("C", (), {"find_one": staticmethod(lambda q: None)})()
+    })
+
+    intents = orc.classify_llm("random reply", {"conversation_id": "CNV-test"})
+    assert [i.name for i in intents] == ["unknown"]
+
+
 def _fake_understanding(monkeypatch, requests):
     from ca.contracts import Understanding
 

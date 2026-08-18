@@ -565,6 +565,18 @@ def classify_llm(text: str, context: dict[str, Any] | None = None) -> list[Inten
     history = context.get("history", "")
     understanding = understand(text, history=history)
     if understanding is None:
+        # A model outage (LLMUnavailable) must not look like the customer
+        # changed the subject. If this conversation has an open dispute case,
+        # keep the reply routed to sa3_dispute instead of dropping to
+        # sa1_general's generic greeting — verified against CNV-2026-d52bb4c6157d,
+        # where a customer's invoice number sent mid-dispute got "what's on
+        # your mind?" because the model call failed on that one turn.
+        open_case = context.get("conversation_id") and app_db()["cases"].find_one(
+            {"conversation_id": context["conversation_id"], "status": {"$in": ["open", "investigating", "waiting"]}}
+        )
+        if open_case:
+            return [Intent(name="dispute", confidence=0.5, entities={"agent": "sa3_dispute"},
+                           reason="continuing open dispute case, classifier unavailable this turn")]
         return _UNKNOWN_INTENT
     if understanding.is_greeting_only and not understanding.requests:
         return [Intent(name="unknown", confidence=0.9, entities={"agent": "sa1_general"},
@@ -823,7 +835,7 @@ def classify_intent(
     config = _config(config)
     classifier: Classifier = config.get("classifier") or default_classifier()
     history = format_recent_history(state.conversation_id)
-    context = {"history": history, **config.get("case_context", {})}
+    context = {"history": history, "conversation_id": state.conversation_id, **config.get("case_context", {})}
     intents = classifier(state.message, context)
 
     # Merge, never replace: message_id and context_error are already in here.
