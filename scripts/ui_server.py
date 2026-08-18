@@ -308,6 +308,28 @@ def _labelize(key: str) -> str:
     return key.replace("_", " ").title()
 
 
+def _evidence_line(evidence: list[dict]) -> str | None:
+    """First evidence entry, rendered as the concrete fact behind a dispute —
+    invoice/receipt number, amount, date, item — instead of just its title."""
+    if not evidence:
+        return None
+    e = evidence[0]
+    kind = e.get("type")
+    if kind == "invoice_on_record":
+        items = ", ".join(e.get("matched_items") or e.get("items") or [])
+        line = f"Invoice {e['voucher_number']} — ₹{e['amount']:,.0f} ({e.get('date', '')})"
+        return f"{line} — {items}" if items else line
+    if kind == "receipt_on_record":
+        return f"Receipt {e['voucher_number']} — ₹{e['amount']:,.0f} ({e.get('date', '')})"
+    if kind == "voucher_not_found":
+        return f"Voucher {e['voucher_number']} not found on this account"
+    if kind == "looks_like_item_ref":
+        return f"'{e['ref_given']}' matches item: {e['item_name']}"
+    if kind == "outstanding_snapshot":
+        return f"₹{e['outstanding']:,.0f} outstanding across {e['open_bill_count']} invoices"
+    return None
+
+
 def _agent_event_feed(adb, limit: int = 12) -> list[dict]:
     """Chat-style feed of what SA-2/3/4 actually decided — one card per case,
     approval or promise, newest first — instead of raw inbound message text."""
@@ -334,6 +356,9 @@ def _agent_event_feed(adb, limit: int = 12) -> list[dict]:
             {"label": _labelize(c["status"]), "color": _CASE_STATUS_COLOR.get(c["status"], "amber")},
         ]
         detail = f"Reason: {c['title']}"
+        ev_line = _evidence_line(c.get("evidence") or [])
+        if ev_line:
+            detail += f" — {ev_line}"
         if c.get("resolution"):
             detail += f" — Resolution: {c['resolution']}"
         events.append({
@@ -346,7 +371,14 @@ def _agent_event_feed(adb, limit: int = 12) -> list[dict]:
     for a in approvals:
         meta = _AGENT_EVENT_META["sa4_approval"]
         amt = f" of ₹{a['amount']:,.0f}" if a.get("amount") is not None else ""
-        detail = f"Reason: {_labelize(a['type'])}{amt}" + (f" — {a['recommendation']}" if a.get("recommendation") else "")
+        ctx = a.get("context") or {}
+        facts = []
+        if ctx.get("outstanding") is not None:
+            facts.append(f"₹{ctx['outstanding']:,.0f} outstanding across {ctx.get('open_bill_count', 0)} invoices")
+        if ctx.get("avg_days_to_settle") is not None:
+            facts.append(f"avg {ctx['avg_days_to_settle']:.0f}d to settle over {ctx.get('receipt_count', 0)} receipts")
+        facts.append(f"{ctx.get('prior_approvals', 0)} prior approvals ({ctx.get('prior_approvals_granted', 0)} granted)")
+        detail = f"Reason: {_labelize(a['type'])}{amt} — " + ", ".join(facts)
         tags = [{"label": _labelize(a["status"]), "color": _APPROVAL_STATUS_COLOR.get(a["status"], "amber")}]
         if a.get("decided_by"):
             detail += f" — Decided by {a['decided_by']}"
