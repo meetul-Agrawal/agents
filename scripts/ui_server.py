@@ -246,6 +246,50 @@ def resolve_dispute(case_id: str, body: ResolveReq):
             "message_sent": sent is not None, "message_text": text}
 
 
+# ── Payment Promises ─────────────────────────────────────────────────────────
+
+@app.get("/api/promises")
+def list_promises(status: str = "all"):
+    query = {} if status == "all" else {"status": status}
+    docs = list(app_db()["payment_promises"].find(query).sort("due_date", 1).limit(200))
+    names = _customer_names([d["customer_id"] for d in docs])
+    return [{**_clean(d), "customer_name": names.get(d["customer_id"], d["customer_id"])} for d in docs]
+
+
+class PromiseStatusReq(BaseModel):
+    status: str
+    paid_amount: float | None = None
+    note: str = ""
+
+
+@app.post("/api/promises/{promise_id}/status")
+def update_promise_status(promise_id: str, body: PromiseStatusReq):
+    db = app_db()
+    doc = db["payment_promises"].find_one({"promise_id": promise_id})
+    if not doc:
+        return {"ok": False, "error": "promise not found"}
+    update_fields = {"status": body.status, "updated_at": services.utcnow().isoformat()}
+    if body.paid_amount is not None:
+        update_fields["paid_amount"] = float(body.paid_amount)
+    db["payment_promises"].update_one({"promise_id": promise_id}, {"$set": update_fields})
+    updated = db["payment_promises"].find_one({"promise_id": promise_id})
+
+    event_type_map = {
+        "missed": "PAYMENT_PROMISE_MISSED",
+        "paid": "PAYMENT_RECEIVED",
+        "partial": "PAYMENT_PARTIAL",
+        "cancelled": "PAYMENT_PROMISE_MODIFIED",
+        "promised": "PAYMENT_PROMISE_MODIFIED",
+    }
+    evt = event_type_map.get(body.status, "PAYMENT_PROMISE_MODIFIED")
+    services.record_event(
+        doc["customer_id"], evt, "ops",
+        conversation_id=doc.get("conversation_id"),
+        payload={"promise_id": promise_id, "status": body.status, "note": body.note},
+    )
+    return {"ok": True, "promise": _clean(updated)}
+
+
 # ── Label ─────────────────────────────────────────────────────────────────────
 
 class LabelReq(BaseModel):

@@ -202,6 +202,113 @@ function DisputeDetail({ case_, onResolved }) {
   )
 }
 
+// ── Promise detail — view / update status ──────────────────────────────────
+
+function PromiseDetail({ promise, onUpdated }) {
+  const [busy, setBusy] = useState(false)
+  const [paidAmt, setPaidAmt] = useState('')
+  const [note, setNote] = useState('')
+  const [updatedMsg, setUpdatedMsg] = useState(null)
+
+  useEffect(() => {
+    setPaidAmt(promise?.paid_amount ? String(promise.paid_amount) : '')
+    setNote('')
+    setUpdatedMsg(null)
+  }, [promise?.promise_id])
+
+  if (!promise) return <div className="no-thread">← Pick a payment promise</div>
+
+  async function updateStatus(newStatus) {
+    setBusy(true)
+    try {
+      const payload = { status: newStatus, note }
+      if (newStatus === 'paid') {
+        payload.paid_amount = promise.amount
+      } else if (newStatus === 'partial' && paidAmt) {
+        payload.paid_amount = parseFloat(paidAmt)
+      }
+      const res = await api.post(`/api/promises/${promise.promise_id}/status`, payload)
+      if (res.ok) {
+        setUpdatedMsg(`Status updated to ${newStatus}`)
+        onUpdated()
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const isPromised = promise.status === 'promised'
+
+  return (
+    <div className="detail-view">
+      <div className="detail-title">Payment Promise · {inr(promise.amount)}</div>
+      <div className="detail-sub">
+        {promise.customer_name} · {promise.promise_id}
+        {' · '}Due date: <strong>{promise.due_date}</strong>
+        {' · '}<span className={`badge ${
+          promise.status === 'promised' ? 'b-yellow' : promise.status === 'paid' ? 'b-green' : promise.status === 'missed' ? 'b-red' : promise.status === 'partial' ? 'b-blue' : 'b-gray'
+        }`}>{promise.status}</span>
+      </div>
+
+      <div className="sec">
+        <div className="sec-title">Promise Details</div>
+        <ul className="detail-list">
+          <li><strong>Promised Amount:</strong> {inr(promise.amount)}</li>
+          <li><strong>Paid Amount:</strong> {inr(promise.paid_amount || 0)}</li>
+          <li><strong>Due Date:</strong> {promise.due_date}</li>
+          <li><strong>Created:</strong> {fmt(promise.created_at)}</li>
+          <li><strong>Last Updated:</strong> {fmt(promise.updated_at)}</li>
+          {promise.conversation_id && <li><strong>Originating Thread:</strong> {promise.conversation_id}</li>}
+        </ul>
+      </div>
+
+      {isPromised && (
+        <div className="sec">
+          <div className="sec-title">Update Status</div>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
+            <label style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Partial Amount (if partial):</label>
+            <input
+              type="number"
+              placeholder="e.g. 50000"
+              value={paidAmt}
+              onChange={e => setPaidAmt(e.target.value)}
+              style={{
+                background: 'var(--surface)',
+                color: 'var(--text)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                padding: '4px 8px',
+                fontSize: '12px',
+                width: '120px',
+              }}
+            />
+          </div>
+          <textarea
+            className="detail-note"
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="Optional internal note regarding this promise…"
+            disabled={busy}
+          />
+          <div className="detail-actions">
+            <button className="dbtn dbtn-approve" disabled={busy} onClick={() => updateStatus('paid')}>✓ Mark as Paid</button>
+            <button className="dbtn" style={{ background: 'var(--badge-blue-bg)', color: 'var(--badge-blue-fg)' }} disabled={busy} onClick={() => updateStatus('partial')}>~ Partial Paid</button>
+            <button className="dbtn dbtn-reject" disabled={busy} onClick={() => updateStatus('missed')}>✗ Mark Missed</button>
+            <button className="dbtn dbtn-drop" disabled={busy} onClick={() => updateStatus('cancelled')}>Cancel Promise</button>
+          </div>
+        </div>
+      )}
+
+      {updatedMsg && (
+        <div className="sent-box">
+          <div className="sent-label">Updated</div>
+          {updatedMsg}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Right panel ───────────────────────────────────────────────────────────────
 
 function RightPanel({ cls, classifier, activeConv, lastInput, customerId, allIntents }) {
@@ -398,11 +505,13 @@ export default function App() {
   // New-thread customer selection (only used when creating, not global)
   const [newThreadCustId, setNewThreadCustId] = useState('')
 
-  const [leftTab,   setLeftTab]   = useState('threads') // 'threads' | 'approvals' | 'disputes'
+  const [leftTab,   setLeftTab]   = useState('threads') // 'threads' | 'approvals' | 'disputes' | 'promises'
   const [approvals, setApprovals] = useState([])
   const [disputes,  setDisputes]  = useState([])
+  const [promises,  setPromises]  = useState([])
   const [selApproval, setSelApproval] = useState(null)
   const [selDispute,  setSelDispute]  = useState(null)
+  const [selPromise,  setSelPromise]  = useState(null)
 
   // The active conversation's customer_id — read from the conversation object, not editable.
   const customerId = activeConv?.customer_id || ''
@@ -419,6 +528,12 @@ export default function App() {
       setSelDispute(cur => cur && rows.find(r => r.case_id === cur.case_id) || null)
     }).catch(() => {})
   }
+  function refreshPromises() {
+    api.get('/api/promises').then(rows => {
+      setPromises(rows)
+      setSelPromise(cur => cur && rows.find(r => r.promise_id === cur.promise_id) || null)
+    }).catch(() => {})
+  }
   // A decision/resolution sends its reply straight into a conversation, not
   // necessarily the one open right now — refetch so it shows without the
   // customer having to click away and back.
@@ -433,9 +548,10 @@ export default function App() {
     api.get('/api/intents').then(setAllIntents).catch(() => {})
     refreshApprovals()
     refreshDisputes()
-    // ponytail: plain poll, not a websocket — an approval/dispute raised from
+    refreshPromises()
+    // ponytail: plain poll, not a websocket — an approval/dispute/promise raised from
     // another channel still shows up within a few seconds without new infra.
-    const id = setInterval(() => { refreshApprovals(); refreshDisputes() }, 15000)
+    const id = setInterval(() => { refreshApprovals(); refreshDisputes(); refreshPromises() }, 15000)
     return () => clearInterval(id)
   }, [])
 
@@ -496,9 +612,10 @@ export default function App() {
       setSelectedId(result.message_id)
       api.get(`/api/conversations/${activeConv.conversation_id}`).then(setMessages)
       api.get('/api/conversations').then(setConvs)
-      // A message can create an approval or dispute (sa3/sa4) — surface it right away.
+      // A message can create an approval, dispute, or payment promise (sa3/sa4/sa2) — surface it right away.
       if ((result.agents || []).includes('sa4_approval')) refreshApprovals()
       if ((result.agents || []).includes('sa3_dispute')) refreshDisputes()
+      if ((result.agents || []).includes('sa2_recovery')) refreshPromises()
     } catch (e) {
       console.error(e)
     } finally {
@@ -534,6 +651,9 @@ export default function App() {
           </button>
           <button className={`tab-btn${leftTab === 'disputes' ? ' active' : ''}`} onClick={() => setLeftTab('disputes')}>
             Disputes {disputes.length > 0 && <span className="tab-count">{disputes.length}</span>}
+          </button>
+          <button className={`tab-btn${leftTab === 'promises' ? ' active' : ''}`} onClick={() => setLeftTab('promises')}>
+            Promises {promises.filter(p => p.status === 'promised').length > 0 && <span className="tab-count">{promises.filter(p => p.status === 'promised').length}</span>}
           </button>
         </div>
 
@@ -601,12 +721,32 @@ export default function App() {
             ))}
           </div>
         )}
+
+        {leftTab === 'promises' && (
+          <div className="conv-list">
+            {promises.length === 0 && <div className="empty-list">No payment promises</div>}
+            {promises.map(p => (
+              <div key={p.promise_id}
+                className={`queue-item${selPromise?.promise_id === p.promise_id ? ' active' : ''}`}
+                onClick={() => setSelPromise(p)}>
+                <div className="queue-title">{inr(p.amount)}</div>
+                <div className="queue-meta">
+                  <span>{p.customer_name}</span>
+                  <span>Due: {p.due_date}</span>
+                  <span className={`badge ${
+                    p.status === 'promised' ? 'b-yellow' : p.status === 'paid' ? 'b-green' : p.status === 'missed' ? 'b-red' : p.status === 'partial' ? 'b-blue' : 'b-gray'
+                  }`}>{p.status}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </aside>
 
       {/* ── CENTER ── */}
       <main className="center">
         <div className="center-header">
-          {leftTab === 'approvals' ? 'Approvals' : leftTab === 'disputes' ? 'Disputes' : (
+          {leftTab === 'approvals' ? 'Approvals' : leftTab === 'disputes' ? 'Disputes' : leftTab === 'promises' ? 'Payment Promises' : (
             activeConv ? (
               <>
                 <span className="conv-ref">{activeConv.conversation_id}</span>
@@ -620,6 +760,8 @@ export default function App() {
           <ApprovalDetail approval={selApproval} onDecided={() => { refreshApprovals(); refreshMessages() }} />
         ) : leftTab === 'disputes' ? (
           <DisputeDetail case_={selDispute} onResolved={() => { refreshDisputes(); refreshMessages() }} />
+        ) : leftTab === 'promises' ? (
+          <PromiseDetail promise={selPromise} onUpdated={() => { refreshPromises(); refreshMessages() }} />
         ) : !activeConv ? (
           <div className="no-thread">← Select a thread or click + New Thread</div>
         ) : (
