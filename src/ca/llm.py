@@ -100,6 +100,23 @@ def _pace_request() -> None:
     _last_call_time = time.time()
 
 
+def _clean_json_str(raw: str) -> str:
+    """Strip markdown blocks or extra surrounding noise if present."""
+    text = (raw or "").strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if len(lines) >= 2 and lines[0].startswith("```") and lines[-1].startswith("```"):
+            text = "\n".join(lines[1:-1]).strip()
+        elif lines[0].startswith("```"):
+            text = "\n".join(lines[1:]).strip()
+    # If there is leading/trailing text outside the outermost braces:
+    start = text.find("{")
+    end = text.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        text = text[start : end + 1]
+    return text
+
+
 def complete_structured(
     schema: type[T],
     system: str,
@@ -109,28 +126,20 @@ def complete_structured(
     temperature: float = 0.0,
     example: BaseModel | dict[str, Any] | None = None,
 ) -> T:
-    """Return an instance of `schema`, or raise LLMUnavailable.
-
-    ponytail: JSON-schema prompting plus a strict parse, rather than a
-    provider-specific structured-output API — NIM's OpenAI-compatible endpoint
-    does not implement the same one. Switch to native structured output when the
-    provider supports it.
-    """
+    """Return an instance of `schema`, or raise LLMUnavailable."""
     import time
 
     client = _client()
-    # Small instruct models happily echo a JSON *schema* back when shown one, so
-    # the example carries the shape and the schema is only a reference.
     shape = (
         example.model_dump(mode="json") if isinstance(example, BaseModel) else example
     )
-    prompt = f"{user}\n\nRespond with a JSON object only — data, never the schema itself."
+    prompt = f"{user}\n\nRespond with a valid JSON object only matching the required data structure."
     if shape is not None:
-        prompt += f"\nA valid response looks exactly like this:\n{json.dumps(shape)}"
+        prompt += f"\nExample JSON structure:\n{json.dumps(shape)}"
     else:
-        prompt += f"\nIt must satisfy this schema:\n{json.dumps(schema.model_json_schema())}"
+        prompt += f"\nRequired JSON Schema:\n{json.dumps(schema.model_json_schema())}"
 
-    max_retries = 5
+    max_retries = 3
     retries = 0
     content = ""
     while True:
@@ -144,13 +153,46 @@ def complete_structured(
             )
             content = response.choices[0].message.content or ""
             break
-        except Exception as exc:  # provider errors are not the caller's problem
+        except Exception as exc:
             retries += 1
             if retries > max_retries:
                 raise LLMUnavailable(f"{type(exc).__name__}: {exc}") from exc
-            time.sleep(2.0 * (2 ** (retries - 1)))
+            time.sleep(1.0 * (2 ** (retries - 1)))
 
+    cleaned = _clean_json_str(content)
+
+    # 1. Direct validation
     try:
-        return schema.model_validate_json(content)
+        return schema.model_validate_json(cleaned)
+    except ValidationError:
+        pass
+
+    # 2. Try parsing dict and checking nested keys
+    try:
+        data = json.loads(cleaned)
+    except Exception as exc:
+        raise LLMUnavailable(f"model returned non-JSON content: {cleaned[:200]}") from exc
+
+    if isinstance(data, dict):
+        try:
+            return schema.model_validate(data)
+        except ValidationError:
+            # Check if wrapped in a single key like "understanding", "result", "data"
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    try:
+                        return schema.model_validate(v)
+                    except ValidationError:
+                        pass
+                elif isinstance(v, list) and hasattr(schema, "model_fields") and len(schema.model_fields) == 1:
+                    try:
+                        field_name = next(iter(schema.model_fields.keys()))
+                        return schema.model_validate({field_name: v})
+                    except ValidationError:
+                        pass
+
+    # If all normalization attempts fail, raise LLMUnavailable with clear error
+    try:
+        return schema.model_validate(data if isinstance(data, dict) else {})
     except ValidationError as exc:
         raise LLMUnavailable(f"model returned an invalid {schema.__name__}: {exc}") from exc

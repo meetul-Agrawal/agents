@@ -253,6 +253,7 @@ def classify(body: ClassifyReq):
         channel="chat",
         customer_id=body.customer_id,
         conversation_id=body.conversation_id,
+        thread_id=body.conversation_id,
         classifier=orchestrator.classify_llm,
     )
 

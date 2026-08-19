@@ -634,6 +634,7 @@ class CustomerAssistState(Contract):
     completed_actions: list[ProposedAction] = Field(default_factory=list)
 
     final_response: str | None = None
+    dialog_state: dict[str, Any] = Field(default_factory=dict)
 
 
 # System boundaries — named so tests and docs cannot drift apart.

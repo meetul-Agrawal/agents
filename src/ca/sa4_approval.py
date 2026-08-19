@@ -444,8 +444,9 @@ def run(task: AgentTask, state: CustomerAssistState) -> AgentResult:
     if amount is not None:
         facts["amount"] = _inr(amount)
     composed = compose_grounded(
-        "Write a short reply telling the customer we've logged their request "
-        "and it needs review before it can be approved.",
+        "Write a short reply telling the customer we've logged their request"
+        + (" of the amount specified in facts" if amount is not None else "")
+        + " and it needs review before it can be approved.",
         facts,
     )
     amount_text = f" of {_inr(amount)}" if amount is not None else ""
