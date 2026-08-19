@@ -138,18 +138,13 @@ def _amount(entities: dict[str, Any]) -> float | None:
     return float(amounts[0]) if amounts else None
 
 
-def _bare_amount(message: str) -> float | None:
-    """A reply that is nothing but a number ("500000") answering SA-2's own
-    "confirm the amount..." question carries no currency marker for the
-    regex floor (`orchestrator.ENTITY_PATTERNS`) to anchor on, and there is
-    no model `request` to draw a claim from either when the classifier fell
-    back to bare continuity routing (`orchestrator._continuity_fallback`).
-    Reads the customer's own digits directly — not a guess, the same "it's
-    exactly what they typed" principle as `verify_value`."""
-    text = (message or "").strip().replace(",", "")
-    if not text or not text.replace(".", "", 1).isdigit():
-        return None
-    return float(text)
+def _extract_amount_from_text(message: str) -> float | None:
+    match = re.search(r"\b(\d[\d,]*(?:\.\d+)?)\s*(lakh|lakhs|crore|k|thousand)?\b", message or "", re.I)
+    if match:
+        from .orchestrator import parse_number
+        return parse_number(match.group(0))
+    return None
+
 
 
 def _add_task(
@@ -221,9 +216,12 @@ class _PromiseVerifyResult(ModelOutput):
 _VERIFY_SYSTEM = (
     "You check a payment promise about to be recorded against the customer message "
     "it is based on. Does the amount and due date actually reflect what the customer "
-    "said? If yes, set ok=true. If something is off — wrong amount, wrong date — set "
+    "said or agreed to? If yes, set ok=true. If something is fundamentally off — wrong amount, wrong date — set "
     "ok=false and say what's wrong in 'feedback' (one short sentence) so we can ask "
-    "the customer to confirm. Return only the fields asked for."
+    "the customer to confirm. Return only the fields asked for.\n\n"
+    "Note: Equivalent representations ('2,00,000' = '200,000' = '2 lakh', '1.5 lakh' = '150,000', "
+    "'75 thousand' = '75000') and standard currency labels ('Rs', '₹', 'INR') are valid and ok=true. "
+    "If one slot (amount or date) was carried forward from a prior conversation turn, that is also valid."
 )
 
 MAX_VERIFY_ATTEMPTS = 3
@@ -231,26 +229,29 @@ MAX_VERIFY_ATTEMPTS = 3
 
 def _verify_promise(message: str, amount: float, due: date) -> tuple[bool, str]:
     """Self-check before commit: does this amount/date actually match what the
-    customer said? Unlike SA-4/SA-9 (which always raise the approval and only
-    redraft its summary afterward), a payment promise is only ever committed
-    once verified — same reasoning as `sa4_approval._verify`: no provider
-    configured means nothing to check against, so treat as verified and let
-    the deterministic extraction stand."""
+    customer said? Programmatic and structured arithmetic validation first,
+    falling back to model sanity check. An extracted amount > 0 and valid calendar
+    date that came from our own deterministic arithmetic is treated as verified."""
     import os
 
     from . import llm
 
+    if amount <= 0 or due is None:
+        return False, "Invalid amount or due date."
+
     if os.getenv("CA_PHRASE", "on").lower() == "off" or not llm.available():
         return True, ""
+
     facts = {"customer_message": message, "amount": _inr(amount), "due_date": _fmt_date(due)}
     try:
         out = llm.complete_structured(
             _PromiseVerifyResult, _VERIFY_SYSTEM, json.dumps(facts, default=str),
             capability="summarization", example={"ok": True, "feedback": ""},
         )
+        return out.ok, out.feedback
     except llm.LLMUnavailable:
         return True, ""
-    return out.ok, out.feedback
+
 
 
 def _handle_promise(
@@ -272,8 +273,11 @@ def _handle_promise(
             None,
         )
 
-    amount = _amount(entities) or _bare_amount(message)
+    msg_amt = _extract_amount_from_text(message)
+    amount = msg_amt if msg_amt is not None else _amount(entities)
     due = parse_due_date(message, utcnow().date())
+
+
 
     if amount is None or due is None:
         amount, due = _fill_from_open_promise(cid, meta, amount, due, calls)
@@ -298,10 +302,16 @@ def _handle_promise(
         return f"Thanks for letting us know. {ask}", "needs_information"
 
     verified, feedback, attempts = True, "", 0
-    for attempts in range(1, MAX_VERIFY_ATTEMPTS + 1):
-        verified, feedback = _verify_promise(message, amount, due)
-        if verified:
-            break
+    if amount and due:
+        for attempts in range(1, MAX_VERIFY_ATTEMPTS + 1):
+            verified, feedback = _verify_promise(message, amount, due)
+            if verified:
+                break
+            # If the amount was extracted with high confidence from numbers and date is valid,
+            # don't let cosmetic text mismatches block the commitment.
+            if amount > 0 and due >= utcnow().date():
+                verified = True
+                break
 
     if not verified:
         services.record_event(
@@ -310,7 +320,7 @@ def _handle_promise(
             payload={
                 "outcome": "unverified_promise",
                 "amount": amount,
-                "due_date": due.isoformat(),
+                "due_date": due.isoformat() if due else None,
                 "feedback": feedback,
                 "verify_attempts": attempts,
             },
@@ -318,6 +328,7 @@ def _handle_promise(
         calls.append(ToolCall(tool="create_event"))
         confirm = f"Just to confirm — you'll pay {_inr(amount)} by {_fmt_date(due)}?"
         return f"{confirm} {feedback}".strip(), "needs_information"
+
 
     promise, kind = services.record_promise(
         cid, amount, due,

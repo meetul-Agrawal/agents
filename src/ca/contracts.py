@@ -427,6 +427,17 @@ class ExtractedValue(ModelOutput):
     value: float | None = None
     unit: str | None = None
 
+    @field_validator("value", mode="before")
+    @classmethod
+    def _coerce_float(cls, v: Any) -> float | None:
+        if v is None or v == "" or (isinstance(v, str) and not v.strip()):
+            return None
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            return None
+
+
 
 class Request(ModelOutput):
     """One thing the customer is asking for."""

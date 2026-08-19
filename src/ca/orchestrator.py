@@ -88,7 +88,8 @@ AGENT_ORDER = [
 ENTITY_PATTERNS = {
     "voucher_numbers": re.compile(r"\b[A-Za-z]{2,6}(?:/[A-Za-z0-9-]{1,6}){1,3}/\d+\b"),
     "amounts": re.compile(
-        r"(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)\s*(lakh|lakhs|crore|k)?|([\d,]{4,})\s*(?:rupees)"
+        r"\b(?:rs\.?|inr|₹)\s*([\d,]+(?:\.\d+)?)\s*(lakh|lakhs|crore|k)?\b"
+        r"|\b([\d,]{4,})\s*(?:rupees)\b"
         r"|\b(\d+(?:\.\d+)?)\s*(lakh|lakhs|crore)\b",
         re.I,
     ),
@@ -110,14 +111,18 @@ def extract_entities(text: str) -> dict[str, Any]:
     amounts: list[float] = []
     for match in ENTITY_PATTERNS["amounts"].finditer(text):
         raw = match.group(1) or match.group(3) or match.group(4)
-        scale = (match.group(2) or match.group(5) or "").lower()
-        if not raw:
+        if not raw or not raw.strip():
             continue
-        value = float(raw.replace(",", ""))
+        scale = (match.group(2) or match.group(5) or "").lower()
+        try:
+            value = float(raw.replace(",", "").strip())
+        except (ValueError, TypeError):
+            continue
         value *= {"lakh": 1e5, "lakhs": 1e5, "crore": 1e7, "k": 1e3}.get(scale, 1)
         amounts.append(value)
     if amounts:
         entities["amounts"] = amounts
+
 
     quantities = [int(q) for q, _ in ENTITY_PATTERNS["quantities"].findall(text)]
     if quantities:
@@ -167,33 +172,28 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "payment_promise": IntentSpec(
         agent="sa2_recovery",
-        means="undertakes to pay at some later point, or revises an undertaking "
-              "already given. An amount, a timing or both may be given, and either may "
-              "be vague. Saying they are unable to pay is also handled here",
-        not_when="the money has already been sent",
+        means="undertakes, promises, or commits to pay or transfer money at some future or later point (e.g. 'I will pay', 'going to transfer', 'will clear by Friday', 'transmitting tomorrow'), or revises an undertaking already given. Saying they are unable to pay is also handled here",
+        not_when="the money has already been sent or transferred in the past",
     ),
     "payment_claim": IntentSpec(
         agent="sa2_recovery",
-        means="asserts or claims that an actual payment or money transfer has already been made or paid (transfer, cheque, draft, cash, UPI) and expects it to be recorded or accounted for",
-        not_when="nothing has been sent yet, or they are merely inquiring about past payment history, or asking for a discount",
+        means="asserts or claims that an actual payment or money transfer has already been sent or completed in the past (e.g. 'I transferred', 'paid yesterday', 'cheque sent', 'UTR 1234') and expects it to be recorded or accounted for",
+        not_when="the transfer is in the future, or they are merely inquiring about past payment history, or asking for a discount",
     ),
     "dispute": IntentSpec(
         agent="sa3_dispute",
-        means="asserts the record or the delivery is wrong and wants it corrected. "
-              "This covers what was charged (price, tax, a charge never agreed, a "
-              "duplicated entry, an amount booked against the wrong account) and what "
-              "arrived (less than was billed, short supply, missing items, nothing at all, or goods damaged, "
-              "defective or not what was ordered), and the account balance or ledger "
-              "figure itself if they say it is wrong rather than merely asking what it "
-              "is. A shortfall between what was invoiced and what was received is "
-              "always this",
-        not_when="the goods arrived as ordered and are simply being sent back",
+        means="asserts the record, billing, or delivery is wrong, defective, short, or damaged and wants it corrected. "
+              "This covers what was charged (price, tax, a charge never agreed, a duplicated entry, an amount booked against the wrong account) "
+              "and what arrived (less than was billed, short supply, missing items, nothing arrived, or goods damaged, leaking, "
+              "defective or not what was ordered, even if they mention returning them), and the account balance or ledger "
+              "figure itself if they say it is wrong rather than merely asking what it is. Any complaint about damaged, defective, or missing stock is always this",
+        not_when="goods arrived correctly and undamaged and are being returned simply as unsold, surplus, or near-expiry",
     ),
     "sales_return": IntentSpec(
         agent="sa6_return",
-        means="wants to physically return or send back goods that were correctly supplied, "
+        means="wants to physically return or send back goods that were correctly supplied without defect or damage, "
               "because they are unsold, surplus, near expiry, or no longer needed",
-        not_when="the goods were missing, short-supplied, never received, defective, or damaged",
+        not_when="goods were damaged, defective, leaking, missing, short-supplied, never received, or incorrectly charged (that is dispute)",
     ),
     "order_capture": IntentSpec(
         agent="sa5_order",
@@ -214,7 +214,7 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "call_schedule_request": IntentSpec(
         agent="sa4_approval",
-        means="wants a phone call scheduled with the sales or accounts team, at a "
+        means="the customer wants a phone call scheduled with the sales or accounts team, at a "
               "chosen date and time",
     ),
     "health_enquiry": IntentSpec(
@@ -224,10 +224,8 @@ INTENT_CATALOG: dict[str, IntentSpec] = {
     ),
     "call_prep": IntentSpec(
         agent="sa8_call_prep",
-        means="an internal colleague wants material to prepare for contacting this "
-              "customer, or is filing notes after that contact. The speaker is a "
-              "colleague, not the customer",
-        not_when="the customer themselves is asking for something",
+        means="an internal colleague or sales staff asks for talking points, customer brief, prep material, or files post-call notes for contacting this customer. The speaker is internal staff, not the customer",
+        not_when="the customer themselves is asking to schedule a phone call",
     ),
     "cross_customer_request": IntentSpec(
         agent="sa1_general",
@@ -319,6 +317,7 @@ def verify_value(claim: ExtractedValue | None, message: str) -> float | None:
 EXTRACTION_RULES = (
     "\n\n### Extraction:\n"
     "For each request also return, when present in the message:\n"
+
     "- amount: a money figure. `text` MUST be copied verbatim from the message "
     "(e.g. \"1,50,000\", \"2 lakh\"), `value` its numeric value. A percentage "
     "(\"8%\", \"8 percent\") is NOT an amount — never put it in `amount`, "
@@ -328,9 +327,9 @@ EXTRACTION_RULES = (
     "bottles, jackets, cartons.\n"
     "- voucher_ref: an invoice or bill number copied verbatim.\n"
     "- due_date_text: any date or deadline phrase, copied verbatim.\n"
-    "- for a dispute: about_balance (boolean: true if the customer states that their account "
-    "balance, outstanding amount, ledger, or overall figure is wrong or incorrect; false if the "
-    "complaint is about physical goods, damaged packets/items, defective products, shortages, or delivery), "
+    "- for a dispute: about_balance (boolean: true ONLY if the customer explicitly states that their total account "
+    "balance, total outstanding, or general ledger figure is wrong/incorrect; false if the complaint is about "
+    "a specific bill item, physical goods, damaged packets/items, defective products, shortages, or delivery), "
     "issue_label (short phrase for what is wrong), item_mentioned (the product named, if any).\n"
     "- for a settlement_request or credit_note_request: approval_type, one of "
     "special_discount, settlement, credit_limit, large_credit_note, write_off, "
@@ -338,6 +337,7 @@ EXTRACTION_RULES = (
     "Never write a number that does not appear in the message. Omit a field "
     "instead of guessing."
 )
+
 
 
 def format_recent_history(conversation_id: str | None, max_messages: int = 20) -> str:
@@ -914,6 +914,30 @@ def _conversation_context(conversation_id: str | None) -> dict[str, Any]:
     return ctx
 
 
+def _find_matching_vouchers(customer_id: str | None, text: str) -> list[str]:
+    if not customer_id:
+        return []
+    match = re.search(r"\b(?:invoice\s+(?:number\s+|no\.?\s*)?|bill\s+(?:number\s+|no\.?\s*)?|invoice\s+is\s+)?(\d{2,6})\b", text, re.I)
+    if not match:
+        return []
+    target_num = match.group(1)
+    from . import customer360 as c3
+    sales = c3.get_sales_history(customer_id) or []
+    outstanding = c3.get_outstanding(customer_id)
+    vouchers = set()
+    for s in sales:
+        v = s.get("voucher_number")
+        if v and target_num in v:
+            vouchers.add(v)
+    if outstanding and outstanding.open_bills:
+        for b in outstanding.open_bills:
+            v = b.voucher_number
+            if v and target_num in str(v):
+                vouchers.add(v)
+    return sorted(vouchers)
+
+
+
 def classify_intent(
     state: CustomerAssistState, config: RunnableConfig = None
 ) -> dict[str, Any]:
@@ -921,6 +945,11 @@ def classify_intent(
     classifier: Classifier = config.get("classifier") or default_classifier()
     history = format_recent_history(state.conversation_id)
     context = {"history": history, "conversation_id": state.conversation_id, **config.get("case_context", {})}
+    if "matching_vouchers" not in context and state.customer_id:
+        matches = _find_matching_vouchers(state.customer_id, state.message)
+        if len(matches) > 1:
+            context["matching_vouchers"] = matches
+
     intents = classifier(state.message, context)
 
     # Merge, never replace: message_id and context_error are already in here.
@@ -928,6 +957,7 @@ def classify_intent(
     understanding = understand(state.message, history=history)
     if understanding is not None:
         entities.update(entities_from(understanding, state.message))
+
 
     # Carry forward voucher numbers, and (mid-dispute) the item/issue/balance
     # slots, from prior turns of this conversation — whatever THIS turn's
